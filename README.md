@@ -16,8 +16,6 @@ RAGPoison is a reproducible MovieLens 100K platform for studying retrieval poiso
 - [Development](#development)
 - [CI and releases](#ci-and-releases)
 - [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [License](#license)
 
 ## Overview
 
@@ -437,19 +435,3 @@ uv run --project api python -m api.app.cli.cli index reset --yes
 
 - Cloud providers can fail selection/save if key files are missing for the selected provider.  
   [Sources: api/app/routers/settings_llm.py, api/app/llm/registry.py]
-
-## Contributing
-
-No `CONTRIBUTING.md` or documented branch/commit policy is present in this repository.
-
-Suggested minimum workflow:
-
-1. Run unit tests: `uv run pytest`
-2. Run integration tests when changing stack behavior: `uv run pytest -m integration`
-3. Run web typecheck for frontend changes: `npm --prefix web run typecheck`
-
-TODO: maintainers should document preferred branching strategy, review expectations, and release process.
-
-## License
-
-TODO: no `LICENSE` file or explicit license metadata was found in repository packaging files.
