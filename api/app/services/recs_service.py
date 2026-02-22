@@ -82,6 +82,7 @@ class RecsService:
                 {
                     "movie_id": movie_id,
                     "title": item.candidate.title,
+                    "genres": list(item.candidate.genres),
                     "score": float(item.score),
                     "explanation": explanations.get(movie_id, "Recommended from deterministic ranking."),
                 }

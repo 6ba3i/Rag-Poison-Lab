@@ -54,6 +54,7 @@ class RecommendationsRequest(BaseModel):
 class RecommendationItem(BaseModel):
     movie_id: int
     title: str
+    genres: list[str]
     score: float
     explanation: str
 

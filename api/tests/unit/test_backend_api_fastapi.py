@@ -243,7 +243,11 @@ def test_recommendations_schema(backend_client: TestClient) -> None:
 
     payload = response.json()
     assert len(payload) == 2
-    assert all("movie_id" in item and "title" in item and "score" in item and "explanation" in item for item in payload)
+    assert all(
+        "movie_id" in item and "title" in item and "genres" in item and "score" in item and "explanation" in item
+        for item in payload
+    )
+    assert all(isinstance(item["genres"], list) for item in payload)
     assert all(item["movie_id"] not in {1, 2} for item in payload)
     assert [item["movie_id"] for item in payload] == [3, 4]
 
