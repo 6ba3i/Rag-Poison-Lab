@@ -236,3 +236,36 @@ def index_poisoned_direct(
     bulk_path = _processed_dir(processed_dir) / ES_BULK_POISONED_MOVIES_JSONL
     _ensure_index(INDEX_MOVIES_POISONED, mapping_path=mapping_path, es_url=base)
     return _bulk_index(INDEX_MOVIES_POISONED, bulk_path=bulk_path, es_url=base)
+
+
+def delete_index_if_exists(index_name: str, *, es_url: str | None = None) -> dict[str, Any]:
+    base = _resolve_es_url(es_url)
+    status, _ = _request(method="HEAD", url=f"{base}/{index_name}")
+    if status == 404:
+        return {
+            "index": index_name,
+            "existed": False,
+            "deleted": False,
+        }
+    if status != 200:
+        raise RuntimeError(f"Failed to check index '{index_name}' before delete (HTTP {status})")
+
+    delete_status, delete_body = _request(method="DELETE", url=f"{base}/{index_name}")
+    if delete_status not in {200, 202}:
+        raise RuntimeError(
+            f"Failed to delete index '{index_name}' (HTTP {delete_status}): "
+            f"{delete_body.decode('utf-8', errors='replace')}"
+        )
+
+    return {
+        "index": index_name,
+        "existed": True,
+        "deleted": True,
+    }
+
+
+def reset_indices(*, es_url: str | None = None) -> dict[str, Any]:
+    return {
+        INDEX_MOVIES: delete_index_if_exists(INDEX_MOVIES, es_url=es_url),
+        INDEX_MOVIES_POISONED: delete_index_if_exists(INDEX_MOVIES_POISONED, es_url=es_url),
+    }

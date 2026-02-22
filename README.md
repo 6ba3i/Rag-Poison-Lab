@@ -51,8 +51,37 @@ Expected indices visible in Kibana:
 
 ## Wizard
 
-Task 05 includes a minimal data-pipeline wizard section:
+Full workflow wizard (Task 11):
 
-- `uv run --project api --no-project python -m api.app.cli.cli wizard`
+- `uv run python -m api.app.cli.cli wizard`
 
-The full multi-section workflow wizard is implemented in a later task.
+Wizard sections:
+
+- Environment checks
+- Configure LLMs
+- Data pipeline
+- Elasticsearch indexing
+- Configure attack
+- Run experiments
+- Generate reports
+- Utilities
+
+## Non-interactive Task 11 Commands
+
+Indexing:
+
+- `uv run python -m api.app.cli.cli index baseline`
+- `uv run python -m api.app.cli.cli index poisoned`
+- `uv run python -m api.app.cli.cli index both`
+- `uv run python -m api.app.cli.cli index stats`
+- `uv run python -m api.app.cli.cli index reset --yes`
+
+Evaluation:
+
+- `uv run python -m api.app.cli.cli eval run --mode single --user-id 1 --label demo_single`
+- `uv run python -m api.app.cli.cli eval run --mode batch --batch-size 100 --label demo_batch`
+- `uv run python -m api.app.cli.cli eval run --mode full --label demo_full`
+
+Reporting:
+
+- `uv run python -m api.app.cli.cli report generate --label demo_full`
