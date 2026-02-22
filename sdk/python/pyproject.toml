@@ -1,0 +1,13 @@
+[project]
+name = "ragpoison-sdk"
+version = "0.1.0"
+description = "RAGPoison Python SDK"
+requires-python = ">=3.12"
+dependencies = [
+  "httpx",
+  "pydantic",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

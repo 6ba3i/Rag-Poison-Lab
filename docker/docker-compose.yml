@@ -1,0 +1,146 @@
+services:
+  elasticsearch:
+    image: ${ELASTICSEARCH_IMAGE:-elasticsearch:8.19.11}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.security.http.ssl.enabled: "false"
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "if command -v curl >/dev/null 2>&1; then curl -fsS http://localhost:9200/_cluster/health | grep -Eq '\"status\":\"(yellow|green)\"'; elif command -v wget >/dev/null 2>&1; then wget -qO- http://localhost:9200/_cluster/health | grep -Eq '\"status\":\"(yellow|green)\"'; else exit 1; fi",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  kibana:
+    image: ${KIBANA_IMAGE:-kibana:8.19.11}
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "5601:5601"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5601/api/status >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ragpoison:dev
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../data:/workspace/data
+      - ../ml-100:/workspace/ml-100
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      OLLAMA_BASE_URL: http://ollama:11434
+      CHATGPT_API_KEY_FILE: /run/secrets/chatgpt_api_key
+      CLAUDE_API_KEY_FILE: /run/secrets/claude_api_key
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      QWEN_API_KEY_FILE: /run/secrets/qwen_api_key
+    secrets:
+      - chatgpt_api_key
+      - claude_api_key
+      - gemini_api_key
+      - qwen_api_key
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8000)); s.close()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  indexer:
+    profiles: ["indexing"]
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ragpoison:dev
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ../data:/workspace/data
+      - ../ml-100:/workspace/ml-100
+      - ../docker/scripts:/workspace/docker/scripts:ro
+      - ../docker/es:/workspace/docker/es:ro
+    command:
+      - sh
+      - -lc
+      - |
+        python - <<'PY'
+        import json
+        import time
+        import urllib.request
+
+        url = "http://elasticsearch:9200/_cluster/health"
+        status = None
+        for _ in range(60):
+          try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+              status = json.loads(response.read().decode("utf-8")).get("status")
+            if status in {"yellow", "green"}:
+              break
+          except Exception:
+            pass
+          time.sleep(2)
+
+        if status not in {"yellow", "green"}:
+          raise SystemExit("Elasticsearch did not reach yellow/green health")
+        PY
+        sh /workspace/docker/scripts/wait-for-es.sh
+        sh /workspace/docker/scripts/index_baseline.sh
+        sh /workspace/docker/scripts/index_poisoned.sh
+    restart: "no"
+
+volumes:
+  es_data:
+  ollama_data:
+
+secrets:
+  chatgpt_api_key:
+    file: ../secrets/chatgpt_api_key.txt
+  claude_api_key:
+    file: ../secrets/claude_api_key.txt
+  gemini_api_key:
+    file: ../secrets/gemini_api_key.txt
+  qwen_api_key:
+    file: ../secrets/qwen_api_key.txt
