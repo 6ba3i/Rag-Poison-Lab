@@ -22,6 +22,16 @@ Data pipeline commands (Task 05):
 - `data/processed/es_bulk_movies.jsonl`
 - `data/processed/es_bulk_poisoned_movies.jsonl`
 
+## Attack Bulk Generation (Task 10)
+
+Generate poisoned movies bulk JSONL from baseline movies bulk using `data/config/attack_config.json`:
+
+- `uv run --project api --no-project python -m api.app.cli.cli attack build-poisoned`
+
+Output path:
+
+- `data/processed/es_bulk_poisoned_movies.jsonl`
+
 ## Elasticsearch Indexing (Task 06)
 
 Run the one-shot indexer service:
