@@ -1,0 +1,39 @@
+{
+  "settings": {
+    "index": {
+      "similarity": {
+        "default": {
+          "type": "BM25"
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "movie_id": {
+        "type": "keyword"
+      },
+      "title": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "genres": {
+        "type": "keyword"
+      },
+      "synopsis": {
+        "type": "text"
+      },
+      "poison_marker": {
+        "type": "boolean"
+      },
+      "poison_payload": {
+        "type": "text"
+      }
+    }
+  }
+}
