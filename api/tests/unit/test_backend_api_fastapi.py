@@ -260,6 +260,7 @@ def test_trace_schema_and_poison_highlight(backend_client: TestClient) -> None:
     assert response.status_code == 200
 
     payload = response.json()
+    assert payload["ranking_mode"] == "deterministic"
     assert "retrieval_query" in payload
     assert "top genres:" in payload["retrieval_query"]
     assert "liked titles:" in payload["retrieval_query"]
@@ -292,12 +293,14 @@ def test_llm_settings_init_and_persist(backend_client: TestClient) -> None:
     assert first_get.status_code == 200
     first_payload = first_get.json()
     assert first_payload["victim"]["provider"] == "local"
+    assert first_payload["ranking_mode"] == "deterministic"
 
     update = backend_client.put(
         "/api/settings/llm",
         json={
             "victim": {"provider": "local", "model": "phi3:mini"},
             "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "ranking_mode": "llm_rerank",
         },
     )
     assert update.status_code == 200
@@ -306,6 +309,41 @@ def test_llm_settings_init_and_persist(backend_client: TestClient) -> None:
     assert second_get.status_code == 200
     second_payload = second_get.json()
     assert second_payload["victim"]["model"] == "phi3:mini"
+    assert second_payload["ranking_mode"] == "llm_rerank"
+
+
+def test_trace_includes_rerank_details_when_enabled(backend_client: TestClient) -> None:
+    update = backend_client.put(
+        "/api/settings/llm",
+        json={
+            "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "ranking_mode": "llm_rerank",
+        },
+    )
+    assert update.status_code == 200
+
+    original_override = app.dependency_overrides[get_llm_registry]
+
+    class _UnavailableRegistry:
+        def get_victim_client(self) -> object:
+            raise RuntimeError("offline")
+
+    app.dependency_overrides[get_llm_registry] = lambda: _UnavailableRegistry()
+    try:
+        response = backend_client.post(
+            "/api/trace",
+            json={"user_id": 1, "mode": "attacked", "k_retrieval": 10},
+        )
+    finally:
+        app.dependency_overrides[get_llm_registry] = original_override
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ranking_mode"] == "llm_rerank"
+    assert payload["rerank_candidates"] is not None
+    assert payload["rerank_prompt"] is not None
+    assert payload["rerank_fallback"] is True
 
 
 def test_llm_options_secret_availability_and_no_secret_leak(backend_client: TestClient) -> None:

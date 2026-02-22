@@ -160,10 +160,12 @@ def test_get_and_set_llm_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         {
             "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
             "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "ranking_mode": "deterministic",
         },
         {
             "victim": {"provider": "local", "model": "phi3:mini"},
             "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "ranking_mode": "llm_rerank",
         },
     ]
 
@@ -187,16 +189,62 @@ def test_get_and_set_llm_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         {
             "victim": {"provider": "local", "model": "phi3:mini"},
             "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "ranking_mode": "llm_rerank",
         }
     )
 
     assert current.victim.provider == "local"
     assert updated.victim.model == "phi3:mini"
+    assert current.ranking_mode == "deterministic"
+    assert updated.ranking_mode == "llm_rerank"
     assert calls[0]["method"] == "GET"
     assert calls[1]["method"] == "PUT"
     assert calls[1]["json"] == {
         "victim": {"provider": "local", "model": "phi3:mini"},
         "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+        "ranking_mode": "llm_rerank",
+    }
+
+
+def test_set_ranking_mode_updates_only_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+    queued = [
+        {
+            "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "ranking_mode": "deterministic",
+        },
+        {
+            "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "ranking_mode": "llm_rerank",
+        },
+    ]
+
+    def fake_request(
+        *,
+        method: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        timeout: float,
+    ) -> httpx.Response:
+        calls.append({"method": method, "url": url, "params": params, "json": json, "timeout": timeout})
+        payload = queued.pop(0)
+        return _json_response(method, url, 200, payload)
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    client = RagPoisonClient("http://localhost:8000")
+    updated = client.set_ranking_mode("llm_rerank")
+
+    assert updated.ranking_mode == "llm_rerank"
+    assert calls[0]["method"] == "GET"
+    assert calls[1]["method"] == "PUT"
+    assert calls[1]["json"] == {
+        "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+        "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+        "ranking_mode": "llm_rerank",
     }
 
 

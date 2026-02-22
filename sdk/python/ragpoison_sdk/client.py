@@ -9,6 +9,7 @@ from ragpoison_sdk.errors import RagPoisonSdkError
 from ragpoison_sdk.types import (
     HistorySplit,
     LlmConfig,
+    RankingMode,
     RecommendationItem,
     RecommendationMode,
     TraceResponse,
@@ -76,6 +77,11 @@ class RagPoisonClient:
         validated = self._validate_model(LlmConfig, config, operation="set_llm_settings.input")
         payload = self._request_json("PUT", "/settings/llm", json=validated.model_dump())
         return self._validate_model(LlmConfig, payload, operation="set_llm_settings")
+
+    def set_ranking_mode(self, mode: RankingMode) -> LlmConfig:
+        current = self.get_llm_settings()
+        updated = current.model_copy(update={"ranking_mode": mode})
+        return self.set_llm_settings(updated)
 
     def _request_json(
         self,

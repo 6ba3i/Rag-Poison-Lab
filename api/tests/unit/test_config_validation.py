@@ -19,6 +19,18 @@ def test_llm_config_normalizes_models() -> None:
 
     assert config.victim.model == "phi3:mini"
     assert config.attacker.model == "gpt-4o-mini"
+    assert config.ranking_mode == "deterministic"
+
+
+def test_llm_config_accepts_llm_rerank_mode() -> None:
+    config = LlmConfig.model_validate(
+        {
+            "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "ranking_mode": "llm_rerank",
+        }
+    )
+    assert config.ranking_mode == "llm_rerank"
 
 
 def test_llm_config_rejects_invalid_provider_and_empty_model() -> None:
@@ -35,6 +47,15 @@ def test_llm_config_rejects_invalid_provider_and_empty_model() -> None:
             {
                 "victim": {"provider": "local", "model": "   "},
                 "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        LlmConfig.model_validate(
+            {
+                "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+                "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+                "ranking_mode": "invalid",
             }
         )
 
@@ -83,4 +104,3 @@ def test_load_attack_config_invalid_json_and_non_object_raise(tmp_path: Path) ->
     non_object_path.write_text("[]", encoding="utf-8")
     with pytest.raises(ValueError, match="must be a JSON object"):
         load_attack_config(non_object_path)
-

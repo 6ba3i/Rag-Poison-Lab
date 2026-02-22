@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from common.schemas.llm_config import LlmConfig, ProviderName
+from common.schemas.llm_config import LlmConfig, ProviderName, RankingMode
 
 RecommendationMode = Literal["baseline", "attacked"]
 HistorySplit = Literal["train", "all"]
@@ -74,11 +74,25 @@ class TraceDoc(BaseModel):
     has_poison: bool = False
 
 
+class TraceRerankCandidate(BaseModel):
+    index: int = Field(ge=1)
+    movie_id: int
+    title: str
+    genres: list[str]
+    year: int | None = None
+
+
 class TraceResponse(BaseModel):
     user_id: int
     mode: RecommendationMode
+    ranking_mode: RankingMode = "deterministic"
     retrieval_query: str
     retrieved_docs: list[TraceDoc]
+    rerank_candidates: list[TraceRerankCandidate] | None = None
+    rerank_prompt: str | None = None
+    rerank_raw_response: str | None = None
+    rerank_parsed_order: list[int] | None = None
+    rerank_fallback: bool | None = None
 
 
 class LlmProviderOption(BaseModel):

@@ -1,6 +1,7 @@
 export type RecommendationMode = "baseline" | "attacked";
 export type HistorySplit = "train" | "all";
 export type ProviderName = "local" | "chatgpt" | "claude" | "gemini" | "qwen";
+export type RankingMode = "deterministic" | "llm_rerank";
 
 export interface UserSummary {
   user_id: number;
@@ -51,8 +52,22 @@ export interface TraceDoc {
 export interface TraceResponse {
   user_id: number;
   mode: RecommendationMode;
+  ranking_mode: RankingMode;
   retrieval_query: string;
   retrieved_docs: TraceDoc[];
+  rerank_candidates?: TraceRerankCandidate[] | null;
+  rerank_prompt?: string | null;
+  rerank_raw_response?: string | null;
+  rerank_parsed_order?: number[] | null;
+  rerank_fallback?: boolean | null;
+}
+
+export interface TraceRerankCandidate {
+  index: number;
+  movie_id: number;
+  title: string;
+  genres: string[];
+  year?: number | null;
 }
 
 export interface LlmRoleConfig {
@@ -63,6 +78,7 @@ export interface LlmRoleConfig {
 export interface LlmConfig {
   victim: LlmRoleConfig;
   attacker: LlmRoleConfig;
+  ranking_mode: RankingMode;
 }
 
 export interface LlmProviderOption {

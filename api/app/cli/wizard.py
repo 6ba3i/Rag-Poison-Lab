@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import questionary
@@ -24,7 +24,7 @@ from api.app.eval.reporting import list_run_labels
 from api.app.llm.registry import LlmRegistry
 from api.app.settings import Settings, get_settings
 from common.schemas.attack_config import AttackConfig, default_attack_config, load_attack_config
-from common.schemas.llm_config import LlmConfig, LlmRoleConfig, default_llm_config
+from common.schemas.llm_config import LlmConfig, LlmRoleConfig, RankingMode, default_llm_config
 
 TARGET_POOL_SIZE = 20
 TARGET_PICK_SEED = 42
@@ -166,7 +166,11 @@ def _configure_llms_screen() -> None:
             continue
         attacker = updated
 
-        new_config = LlmConfig(victim=victim, attacker=attacker)
+        ranking_mode = _prompt_ranking_mode(default=current.ranking_mode)
+        if ranking_mode is None:
+            continue
+
+        new_config = LlmConfig(victim=victim, attacker=attacker, ranking_mode=ranking_mode)
         _save_llm_config(settings=settings, config=new_config)
         typer.echo(f"Saved {settings.resolved_llm_config_path}")
 
@@ -612,6 +616,24 @@ def _prompt_role_config(*, registry: LlmRegistry, role_name: str, current: LlmRo
         model = _prompt_text(f"Model for {role_name} ({provider_key})", current.model)
 
     return LlmRoleConfig(provider=provider_key, model=model)
+
+
+def _prompt_ranking_mode(*, default: RankingMode) -> RankingMode | None:
+    choice = _select(
+        "Select ranking mode",
+        choices=[
+            Choice("Deterministic (BM25 + genre overlap)", "deterministic"),
+            Choice("LLM rerank (experimental — vulnerable to prompt injection)", "llm_rerank"),
+            Choice("Back", "back"),
+        ],
+        default=default,
+    )
+    if choice in {None, "back"}:
+        return None
+    selected = str(choice)
+    if selected not in {"deterministic", "llm_rerank"}:
+        return None
+    return cast(RankingMode, selected)
 
 
 def _test_llm_roles(*, registry: LlmRegistry, config: LlmConfig) -> None:

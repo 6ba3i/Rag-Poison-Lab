@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ApiError, getLlmOptions, getLlmSettings, saveLlmSettings } from "../api/client";
 import type { LlmConfig, LlmProviderOption, LlmRoleConfig } from "../api/types";
 import { LlmSelector } from "../components/LlmSelector";
+import { SettingsPanel } from "../components/SettingsPanel";
 
 export function Settings(): JSX.Element {
   const [providerOptions, setProviderOptions] = useState<LlmProviderOption[]>([]);
@@ -52,6 +53,16 @@ export function Settings(): JSX.Element {
     setSaveStatus(null);
   }
 
+  function updateRankingMode(rankingMode: LlmConfig["ranking_mode"]): void {
+    setDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      return { ...current, ranking_mode: rankingMode };
+    });
+    setSaveStatus(null);
+  }
+
   async function onSave(): Promise<void> {
     if (!draft) {
       return;
@@ -92,6 +103,7 @@ export function Settings(): JSX.Element {
             providerOptions={providerOptions}
             onChange={(value) => updateRole("attacker", value)}
           />
+          <SettingsPanel rankingMode={draft.ranking_mode} onRankingModeChange={updateRankingMode} />
 
           <section className="panel flex flex-wrap items-center justify-between gap-3 p-4">
             <p className="text-sm text-slate-400">Status: {saveStatus ?? "Unsaved changes"}</p>

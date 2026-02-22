@@ -4,8 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from api.app.llm.registry import LlmRegistry
 from api.app.services.trace_service import TraceService
-from api.app.settings import Settings, get_es_client, get_settings
+from api.app.settings import Settings, get_es_client, get_llm_registry, get_settings
 from common.schemas.api_types import TraceRequest, TraceResponse
 
 router = APIRouter(tags=["trace"])
@@ -14,8 +15,9 @@ router = APIRouter(tags=["trace"])
 def get_trace_service(
     settings: Settings = Depends(get_settings),
     es_client: Any = Depends(get_es_client),
+    llm_registry: LlmRegistry = Depends(get_llm_registry),
 ) -> TraceService:
-    return TraceService(settings=settings, es_client=es_client)
+    return TraceService(settings=settings, es_client=es_client, llm_registry=llm_registry)
 
 
 @router.post("/trace", response_model=TraceResponse)
@@ -37,6 +39,12 @@ def trace(
     return TraceResponse(
         user_id=payload.user_id,
         mode=payload.mode,
+        ranking_mode=trace_result["ranking_mode"],
         retrieval_query=str(trace_result["retrieval_query"]),
         retrieved_docs=trace_result["retrieved_docs"],
+        rerank_candidates=trace_result.get("rerank_candidates"),
+        rerank_prompt=trace_result.get("rerank_prompt"),
+        rerank_raw_response=trace_result.get("rerank_raw_response"),
+        rerank_parsed_order=trace_result.get("rerank_parsed_order"),
+        rerank_fallback=trace_result.get("rerank_fallback"),
     )
