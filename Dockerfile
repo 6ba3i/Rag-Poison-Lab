@@ -32,11 +32,17 @@ COPY --from=uv-binary /usr/local/bin/uv /usr/local/bin/uv
 
 RUN python -m venv /opt/venv
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 COPY api/pyproject.toml api/uv.lock /workspace/api/
 
 RUN uv sync --project /workspace/api --frozen --no-install-project
 
 COPY api/app /workspace/api/app
+COPY common /workspace/common
+COPY rag /workspace/rag
+COPY agent /workspace/agent
+COPY conf /workspace/conf
 COPY --from=web-build /work/web/dist/ /workspace/api/app/static/
 
 RUN mkdir -p /workspace/ml-100 /workspace/data

@@ -9,7 +9,7 @@ dependencies = [
   "pydantic",
   "pydantic-settings",
   "httpx",
-  "elasticsearch",
+  "elasticsearch<9",
   "pandas",
   "pyarrow",
   "numpy",
