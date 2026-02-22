@@ -16,6 +16,14 @@ def test_hr_ndcg_mrr_at_k_basic() -> None:
     assert 0.0 < ndcg <= 1.0
 
 
+def test_ndcg_at_k_small_fixture_exact_value() -> None:
+    recommended = [1, 2, 3]
+    relevant = {2, 3}
+
+    expected = (1.0 / 1.584962500721156 + 1.0 / 2.0) / (1.0 + 1.0 / 1.584962500721156)
+    assert ndcg_at_k(recommended, relevant, 3) == pytest.approx(expected)
+
+
 def test_metric_edge_cases() -> None:
     assert hr_at_k([], {1, 2}, 10) == 0.0
     assert ndcg_at_k([1, 2], set(), 10) == 0.0

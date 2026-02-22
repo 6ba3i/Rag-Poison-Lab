@@ -85,3 +85,19 @@ Evaluation:
 Reporting:
 
 - `uv run python -m api.app.cli.cli report generate --label demo_full`
+
+## Testing (Task 14)
+
+Default unit-oriented test run:
+
+- `uv run pytest`
+
+Optional integration tests (requires external stack):
+
+- `uv run pytest -m integration`
+
+Integration preconditions:
+
+- Start services: `docker compose -f docker/docker-compose.yml up -d --build`
+- Build indices for recommendation/trace endpoints: `docker compose -f docker/docker-compose.yml --profile indexing run --rm indexer`
+- Optional API base URL override for smoke tests: `RAGPOISON_API_URL` (default `http://localhost:8000`)

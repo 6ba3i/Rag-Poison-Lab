@@ -5,6 +5,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from api.app.data.movielens_loader import detect_movielens_files, load_movielens_dataset
 from api.app.data.preprocess import prepare_pipeline
@@ -109,6 +110,17 @@ def test_file_detection_with_nonstandard_names(tmp_path: Path) -> None:
     assert detected.movies == paths["movies"]
     assert detected.genres == paths["genres"]
     assert detected.users == paths["users"]
+
+
+def test_schema_validation_raises_for_malformed_ratings_row(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    paths = _write_mock_dataset(dataset_dir)
+
+    with paths["ratings"].open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write("4\t1\t5\tbad_timestamp\n")
+
+    with pytest.raises(ValueError):
+        load_movielens_dataset(dataset_dir)
 
 
 def test_row_counts_positive_after_prepare(tmp_path: Path) -> None:
