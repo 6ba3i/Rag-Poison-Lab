@@ -245,6 +245,7 @@ def test_recommendations_schema(backend_client: TestClient) -> None:
     assert len(payload) == 2
     assert all("movie_id" in item and "title" in item and "score" in item and "explanation" in item for item in payload)
     assert all(item["movie_id"] not in {1, 2} for item in payload)
+    assert [item["movie_id"] for item in payload] == [3, 4]
 
 
 def test_trace_schema_and_poison_highlight(backend_client: TestClient) -> None:
@@ -256,9 +257,30 @@ def test_trace_schema_and_poison_highlight(backend_client: TestClient) -> None:
 
     payload = response.json()
     assert "retrieval_query" in payload
+    assert "top genres:" in payload["retrieval_query"]
+    assert "liked titles:" in payload["retrieval_query"]
+    assert "Alpha" in payload["retrieval_query"]
     assert "retrieved_docs" in payload
     assert len(payload["retrieved_docs"]) == 2
     assert any(doc["has_poison"] for doc in payload["retrieved_docs"])
+
+
+def test_baseline_and_attacked_recommendations_can_differ(backend_client: TestClient) -> None:
+    baseline = backend_client.post(
+        "/api/recommendations",
+        json={"user_id": 1, "mode": "baseline", "k": 2},
+    )
+    attacked = backend_client.post(
+        "/api/recommendations",
+        json={"user_id": 1, "mode": "attacked", "k": 2},
+    )
+
+    assert baseline.status_code == 200
+    assert attacked.status_code == 200
+
+    baseline_ids = [item["movie_id"] for item in baseline.json()]
+    attacked_ids = [item["movie_id"] for item in attacked.json()]
+    assert baseline_ids != attacked_ids
 
 
 def test_llm_settings_init_and_persist(backend_client: TestClient) -> None:
