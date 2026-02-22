@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from api.app.llm.local_ollama import check_ollama_connectivity, list_ollama_models
+from api.app.llm.base import LlmProvider, secret_exists
+from api.app.llm.local_ollama import LocalOllamaProvider, check_ollama_connectivity, list_ollama_models
+from api.app.llm.providers_chatgpt import ChatGptProvider
+from api.app.llm.providers_claude import ClaudeProvider
+from api.app.llm.providers_gemini import GeminiProvider
+from api.app.llm.providers_qwen import QwenProvider
 from api.app.settings import Settings
 from common.schemas.api_types import LlmProviderOption
+from common.schemas.llm_config import LlmConfig, default_llm_config
 
 PROVIDERS: tuple[str, ...] = ("local", "chatgpt", "claude", "gemini", "qwen")
+PROVIDER_CLASSES = {
+    "local": LocalOllamaProvider,
+    "chatgpt": ChatGptProvider,
+    "claude": ClaudeProvider,
+    "gemini": GeminiProvider,
+    "qwen": QwenProvider,
+}
 
 
 class LlmRegistry:
@@ -64,12 +78,41 @@ class LlmRegistry:
             )
         return options
 
+    def get_provider_client(self, *, provider: str, model: str) -> LlmProvider:
+        provider_cls = PROVIDER_CLASSES.get(provider)
+        if provider_cls is None:
+            raise KeyError(f"Unknown provider: {provider}")
+
+        if provider == "local":
+            return provider_cls(base_url=self.settings.ollama_base_url, model=model)
+
+        secret_path = self.settings.provider_secret_paths.get(provider)
+        if secret_path is None:
+            raise KeyError(f"Missing secret path configuration for provider: {provider}")
+        curated_models = self._load_cloud_models().get(provider, [])
+        return provider_cls(model=model, api_key_file=secret_path, curated_models=curated_models)
+
+    def get_victim_client(self) -> LlmProvider:
+        config = self._load_llm_config()
+        return self.get_provider_client(provider=config.victim.provider, model=config.victim.model)
+
+    def get_attacker_client(self) -> LlmProvider:
+        config = self._load_llm_config()
+        return self.get_provider_client(provider=config.attacker.provider, model=config.attacker.model)
+
+    def _load_llm_config(self) -> LlmConfig:
+        path = self.settings.resolved_llm_config_path
+        if not path.exists() or not path.is_file() or path.stat().st_size == 0:
+            return default_llm_config()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return LlmConfig.model_validate(payload)
+        except Exception:  # noqa: BLE001
+            return default_llm_config()
+
 
 def _secret_exists(path: Path) -> bool:
-    try:
-        return path.exists() and path.is_file() and path.read_text(encoding="utf-8").strip() != ""
-    except Exception:  # noqa: BLE001
-        return False
+    return secret_exists(path)
 
 
 def _safe_yaml_load(path: Path) -> object:
