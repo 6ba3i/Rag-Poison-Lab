@@ -1,103 +1,455 @@
-RAGPoison is a reproducible MovieLens 100K research platform for studying RAG poisoning attacks against a recommender, with a FastAPI backend, React frontend, Elasticsearch retrieval, local/cloud LLM provider selection, and experiment workflows via CLI and web UI.
+# RAGPoison
+
+RAGPoison is a reproducible MovieLens 100K platform for studying retrieval poisoning effects on recommendations, traces, and evaluation metrics across baseline and attacked indices.  
+[Sources: api/app/main.py, api/app/services/recs_service.py, api/app/services/trace_service.py, api/app/eval/runner.py, docker/docker-compose.yml]
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Quickstart](#quickstart)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Running the project](#running-the-project)
+- [Project layout](#project-layout)
+- [Usage](#usage)
+- [Development](#development)
+- [CI and releases](#ci-and-releases)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Overview
+
+### Purpose
+
+This repository implements an end-to-end poisoning research workflow on MovieLens data: data prep, poisoned bulk generation, Elasticsearch indexing, API access, UI visualization, and metric/report generation.  
+[Sources: api/app/data/preprocess.py, agent/datasets/poison_builder.py, api/app/services/indexing_service.py, api/app/main.py, api/app/eval/runner.py, api/app/eval/reporting.py]
+
+### Key features
+
+- FastAPI backend serving API routes under `/api` plus SPA/static fallback.  
+  [Source: api/app/main.py]
+- Recommendation and trace APIs that switch between `movies` and `movies_poisoned` indices by mode (`baseline` or `attacked`).  
+  [Sources: api/app/routers/recs.py, api/app/routers/trace.py, api/app/services/recs_service.py]
+- Configurable victim/attacker LLM roles and ranking mode (`deterministic` or `llm_rerank`).  
+  [Sources: common/schemas/llm_config.py, api/app/routers/settings_llm.py, api/app/services/recs_service.py]
+- Interactive CLI wizard and non-interactive commands for data, attack, indexing, evaluation, and reports.  
+  [Sources: api/app/cli/cli.py, api/app/cli/wizard.py, api/app/cli/commands_data.py, api/app/cli/commands_attack.py, api/app/cli/commands_index.py, api/app/cli/commands_eval.py, api/app/cli/commands_report.py]
+- React + Vite frontend for user selection, dashboard, and settings.  
+  [Sources: web/package.json, web/src/main.tsx, web/src/pages/UserSelect.tsx, web/src/pages/Dashboard.tsx, web/src/pages/Settings.tsx]
+- Python SDK client for typed API consumption.  
+  [Sources: sdk/python/ragpoison_sdk/client.py, sdk/python/ragpoison_sdk/types.py]
+
+### High level architecture
+
+- `api/`: application service layer (routers, services, CLI, evaluation).
+- `agent/`: poisoning logic and poisoned bulk writer.
+- `rag/`: recommendation candidate generation, ranking, explanations, and trace shaping.
+- `web/`: frontend UI.
+- `docker/`: compose stack, mappings, and indexing scripts.
+- `sdk/python/`: Python client.
+- `data/` and `ml-100/`: runtime dataset/config/results locations (bind-mounted in compose).
+
+[Sources: docker/docker-compose.yml, api/app/services/recs_service.py, agent/datasets/poison_builder.py, rag/recsys/candidate_gen.py, sdk/python/ragpoison_sdk/client.py, api/app/data/paths.py]
+
+## Quickstart
+
+The shortest path to a working local stack:
+
+```bash
+# 1) Prepare processed outputs from MovieLens files.
+uv run --project api python -m api.app.cli.cli data prepare
+
+# 2) Start Elasticsearch, Kibana, Ollama, and app.
+docker compose -f docker/docker-compose.yml up -d --build
+
+# 3) Build baseline + poisoned indices.
+docker compose -f docker/docker-compose.yml --profile indexing run --rm indexer
+
+# 4) Verify backend health.
+curl -s http://localhost:8000/api/health
+```
+
+Open:
+
+- App: `http://localhost:8000`
+- Kibana: `http://localhost:5601`
+
+[Sources: api/app/cli/commands_data.py, docker/docker-compose.yml, api/app/routers/health.py, tools/dev_notes.md]
 
 ## Prerequisites
 
-Placeholder: Python 3.12+, uv, Docker, and Docker Compose requirements will be documented in later tasks.
+- Python `>=3.12` for backend and SDK.  
+  [Sources: api/pyproject.toml, sdk/python/pyproject.toml]
+- `uv` for Python dependency management and command execution in this repo.  
+  [Sources: Dockerfile, tools/dev_notes.md]
+- Docker Engine + Docker Compose plugin for full stack services (`elasticsearch`, `kibana`, `ollama`, `app`, optional `indexer`).  
+  [Source: docker/docker-compose.yml]
+- Node/npm for frontend local workflows (`dev`, `build`, `typecheck`, `preview`).  
+  [Source: web/package.json]
 
-## Setup
+Service roles in the default stack:
 
-Use a single repo-root virtual environment at `.venv` with `uv`, while keeping per-project lockfiles in `api/uv.lock` and `sdk/python/uv.lock`.
+- Elasticsearch: retrieval/index storage.
+- Ollama: local model endpoint.
+- Kibana: index inspection UI.
+- App: FastAPI backend + static SPA serving.
 
-## Run
+[Sources: docker/docker-compose.yml, api/app/main.py, api/app/settings.py]
 
-Data pipeline commands (Task 05):
+## Installation
 
-- `uv run --project api --no-project python -m api.app.cli.cli data prepare`
-- `uv run --project api --no-project python -m api.app.cli.cli data profiles`
-- `uv run --project api --no-project python -m api.app.cli.cli data splits`
-- `uv run --project api --no-project python -m api.app.cli.cli data export-es`
+### Backend (API)
 
-`data export-es` now writes both:
+```bash
+uv sync --project api --frozen
+```
 
-- `data/processed/es_bulk_movies.jsonl`
-- `data/processed/es_bulk_poisoned_movies.jsonl`
+[Sources: api/pyproject.toml, api/uv.lock, Dockerfile]
 
-## Attack Bulk Generation (Task 10)
+### SDK (optional)
 
-Generate poisoned movies bulk JSONL from baseline movies bulk using `data/config/attack_config.json`:
+```bash
+uv sync --project sdk/python --frozen
+```
 
-- `uv run --project api --no-project python -m api.app.cli.cli attack build-poisoned`
+[Sources: sdk/python/pyproject.toml, sdk/python/uv.lock]
 
-Output path:
+### Web frontend
 
-- `data/processed/es_bulk_poisoned_movies.jsonl`
+```bash
+npm --prefix web install
+```
 
-## Elasticsearch Indexing (Task 06)
+[Source: web/package.json]
 
-Run the one-shot indexer service:
+### Build frontend assets
 
-- `docker compose -f docker/docker-compose.yml --profile indexing run --rm indexer`
+```bash
+npm --prefix web run build
+```
 
-Or run scripts manually inside a container that has `/workspace` mounts:
+[Source: web/package.json]
 
-- `/workspace/docker/scripts/wait-for-es.sh`
-- `/workspace/docker/scripts/index_baseline.sh`
-- `/workspace/docker/scripts/index_poisoned.sh`
+### Build container image (optional)
 
-Expected indices visible in Kibana:
+```bash
+docker build -t ragpoison:dev -f Dockerfile .
+```
 
-- `movies`
-- `movies_poisoned`
+[Source: Dockerfile]
 
-## Wizard
+## Configuration
 
-Full workflow wizard (Task 11):
+### Environment variables
 
-- `uv run python -m api.app.cli.cli wizard`
+#### App/runtime variables
 
-Wizard sections:
+| Name | Required | Default | Description | Where used |
+|---|---|---|---|---|
+| `ELASTICSEARCH_URL` | No | `http://elasticsearch:9200` | Elasticsearch base URL for app/indexing. | `api/app/settings.py`, `api/app/services/indexing_service.py`, `docker/docker-compose.yml` |
+| `OLLAMA_BASE_URL` | No | `http://ollama:11434` | Local Ollama base URL. | `api/app/settings.py`, `docker/docker-compose.yml` |
+| `CHATGPT_API_KEY_FILE` | Conditional | `/run/secrets/chatgpt_api_key` | File path for ChatGPT key. Required only if ChatGPT provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_chatgpt.py` |
+| `CLAUDE_API_KEY_FILE` | Conditional | `/run/secrets/claude_api_key` | File path for Claude key. Required only if Claude provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_claude.py` |
+| `GEMINI_API_KEY_FILE` | Conditional | `/run/secrets/gemini_api_key` | File path for Gemini key. Required only if Gemini provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_gemini.py` |
+| `QWEN_API_KEY_FILE` | Conditional | `/run/secrets/qwen_api_key` | File path for Qwen key. Required only if Qwen provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_qwen.py` |
+| `DATA_ROOT` | No | auto-resolved | Optional override for data root path. | `api/app/settings.py` |
+| `CONFIG_ROOT` | No | auto-resolved | Optional override for config directory. | `api/app/settings.py` |
+| `PROCESSED_ROOT` | No | auto-resolved | Optional override for processed outputs directory. | `api/app/settings.py` |
+| `STATIC_ROOT` | No | `api/app/static` | Optional override for served SPA/static root. | `api/app/settings.py`, `api/app/main.py` |
+| `LLM_MODELS_FILE` | No | `conf/llm_models.yaml` | Optional override for curated cloud model list file. | `api/app/settings.py`, `api/app/llm/registry.py` |
 
-- Environment checks
-- Configure LLMs
-- Data pipeline
-- Elasticsearch indexing
-- Configure attack
-- Run experiments
-- Generate reports
-- Utilities
+#### Compose/image selection variables
 
-## Non-interactive Task 11 Commands
+| Name | Required | Default | Description | Where used |
+|---|---|---|---|---|
+| `ELASTICSEARCH_IMAGE` | No | `elasticsearch:8.19.11` | Elasticsearch image tag override. | `docker/docker-compose.yml`, `docker/.env.example` |
+| `KIBANA_IMAGE` | No | `kibana:8.19.11` | Kibana image tag override. | `docker/docker-compose.yml`, `docker/.env.example` |
+| `OLLAMA_IMAGE` | No | `ollama/ollama:latest` | Ollama image tag override. | `docker/docker-compose.yml`, `docker/.env.example` |
 
-Indexing:
+#### Script and test variables
 
-- `uv run python -m api.app.cli.cli index baseline`
-- `uv run python -m api.app.cli.cli index poisoned`
-- `uv run python -m api.app.cli.cli index both`
-- `uv run python -m api.app.cli.cli index stats`
-- `uv run python -m api.app.cli.cli index reset --yes`
+| Name | Required | Default | Description | Where used |
+|---|---|---|---|---|
+| `ES_URL` | No | falls back to `ELASTICSEARCH_URL` | Explicit ES URL override for shell index/wait scripts. | `docker/scripts/wait-for-es.sh`, `docker/scripts/index_baseline.sh`, `docker/scripts/index_poisoned.sh` |
+| `MAPPING_FILE` | No | script default | Mapping file override for index scripts. | `docker/scripts/index_baseline.sh`, `docker/scripts/index_poisoned.sh` |
+| `BULK_FILE` | No | script default | Bulk JSONL input override for index scripts. | `docker/scripts/index_baseline.sh`, `docker/scripts/index_poisoned.sh` |
+| `ES_WAIT_RETRIES` | No | `60` | Wait loop retry count for ES readiness script. | `docker/scripts/wait-for-es.sh` |
+| `ES_WAIT_SLEEP_SECONDS` | No | `2` | Wait loop sleep interval in seconds. | `docker/scripts/wait-for-es.sh` |
+| `KIBANA_URL` | No | `http://kibana:5601` | Wizard Kibana health/status URL override. | `api/app/cli/wizard.py` |
+| `RAGPOISON_API_URL` | No | `http://localhost:8000` | Smoke test API base override. | `test/smoke/test_stack_up.py`, `test/smoke/test_recs_roundtrip.py` |
 
-Evaluation:
+### Config files
 
-- `uv run python -m api.app.cli.cli eval run --mode single --user-id 1 --label demo_single`
-- `uv run python -m api.app.cli.cli eval run --mode batch --batch-size 100 --label demo_batch`
-- `uv run python -m api.app.cli.cli eval run --mode full --label demo_full`
+- `data/config/llm_config.json`: victim/attacker providers + models + `ranking_mode`. Read/write via settings API and wizard.  
+  [Sources: api/app/routers/settings_llm.py, api/app/services/recs_service.py, api/app/cli/wizard.py, data/config/llm_config.json]
+- `data/config/attack_config.json`: attack type and poisoning parameters.  
+  [Sources: common/schemas/attack_config.py, agent/datasets/poison_builder.py, api/app/cli/wizard.py, data/config/attack_config.json]
+- `conf/llm_models.yaml`: curated cloud model options by provider.  
+  [Sources: api/app/llm/registry.py, conf/llm_models.yaml]
+- `docker/es/movies_index.json` and `docker/es/movies_poisoned_index.json`: index mapping payloads used by index workflows.  
+  [Sources: api/app/services/indexing_service.py, docker/scripts/index_baseline.sh, docker/scripts/index_poisoned.sh]
 
-Reporting:
+### Secrets and security notes
 
-- `uv run python -m api.app.cli.cli report generate --label demo_full`
+- Compose mounts provider keys via Docker secrets from `secrets/*.txt` into `/run/secrets/*`.  
+  [Source: docker/docker-compose.yml]
+- Cloud providers are marked unavailable when their secret file is missing.  
+  [Sources: api/app/llm/registry.py, api/app/routers/settings_llm.py]
+- `claude`, `gemini`, and `qwen` providers are selectable but `generate()` is currently not implemented in this repo version.  
+  [Sources: api/app/llm/providers_claude.py, api/app/llm/providers_gemini.py, api/app/llm/providers_qwen.py]
 
-## Testing (Task 14)
+## Running the project
 
-Default unit-oriented test run:
+### Local development commands
 
-- `uv run pytest`
+Run API CLI help:
 
-Optional integration tests (requires external stack):
+```bash
+uv run --project api python -m api.app.cli.cli --help
+```
 
-- `uv run pytest -m integration`
+Run interactive workflow wizard:
 
-Integration preconditions:
+```bash
+uv run --project api python -m api.app.cli.cli wizard
+```
 
-- Start services: `docker compose -f docker/docker-compose.yml up -d --build`
-- Build indices for recommendation/trace endpoints: `docker compose -f docker/docker-compose.yml --profile indexing run --rm indexer`
-- Optional API base URL override for smoke tests: `RAGPOISON_API_URL` (default `http://localhost:8000`)
+Run API server directly:
+
+```bash
+uv run --project api uvicorn api.app.main:app --host 0.0.0.0 --port 8000
+```
+
+Run web dev server:
+
+```bash
+npm --prefix web run dev
+```
+
+[Sources: api/app/cli/cli.py, api/pyproject.toml, Dockerfile, web/package.json]
+
+### Docker/Compose workflow
+
+Start long-lived services:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+Run one-shot indexer profile:
+
+```bash
+docker compose -f docker/docker-compose.yml --profile indexing run --rm indexer
+```
+
+Stop services:
+
+```bash
+docker compose -f docker/docker-compose.yml down
+```
+
+Data persistence note:
+
+- `../data` and `../ml-100` are bind mounts in compose.
+- `es_data` and `ollama_data` are named volumes.
+
+[Source: docker/docker-compose.yml]
+
+### Production run notes
+
+TODO: production deployment topology, ingress/TLS, and operations guidance are not defined in this repository.
+
+## Project layout
+
+```text
+api/              FastAPI app, CLI, evaluation logic, settings
+web/              React + Vite frontend
+agent/            Poisoning transformations and bulk generation
+rag/              Candidate generation, ranking, explanation, trace shaping
+common/           Shared schemas
+docker/           Compose stack, index mappings, helper scripts
+sdk/python/       Python SDK client package
+data/             Runtime config, processed outputs, results
+ml-100/           MovieLens source files
+secrets/          Local provider key files for compose secrets
+```
+
+[Sources: docker/docker-compose.yml, api/app/main.py, api/app/cli/cli.py, agent/datasets/poison_builder.py, rag/recsys/candidate_gen.py, sdk/python/ragpoison_sdk/client.py, api/app/data/paths.py]
+
+## Usage
+
+### Common CLI workflows
+
+Prepare data:
+
+```bash
+uv run --project api python -m api.app.cli.cli data prepare
+```
+
+Build poisoned bulk from baseline bulk:
+
+```bash
+uv run --project api python -m api.app.cli.cli attack build-poisoned
+```
+
+Index baseline + poisoned data and print stats:
+
+```bash
+uv run --project api python -m api.app.cli.cli index both
+```
+
+Run evaluation:
+
+```bash
+uv run --project api python -m api.app.cli.cli eval run --mode full --label demo_run
+```
+
+Generate reports for a run:
+
+```bash
+uv run --project api python -m api.app.cli.cli report generate --label demo_run
+```
+
+[Sources: api/app/cli/commands_data.py, api/app/cli/commands_attack.py, api/app/cli/commands_index.py, api/app/cli/commands_eval.py, api/app/cli/commands_report.py]
+
+### API endpoints
+
+Defined API routes:
+
+- `GET /api/health`
+- `GET /api/users`
+- `GET /api/users/{user_id}/profile`
+- `GET /api/users/{user_id}/history?split=train|all`
+- `POST /api/recommendations`
+- `POST /api/trace`
+- `GET /api/settings/llm`
+- `PUT /api/settings/llm`
+- `GET /api/settings/llm/options`
+
+[Sources: api/app/main.py, api/app/routers/health.py, api/app/routers/users.py, api/app/routers/recs.py, api/app/routers/trace.py, api/app/routers/settings_llm.py]
+
+Example requests:
+
+```bash
+curl -s http://localhost:8000/api/users?limit=10
+
+curl -s -X POST http://localhost:8000/api/recommendations \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":1,"mode":"baseline","k":10}'
+
+curl -s -X POST http://localhost:8000/api/trace \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":1,"mode":"attacked","k_retrieval":20}'
+```
+
+Request/response schemas are defined in `common/schemas/api_types.py`.
+
+### Python SDK example
+
+```python
+from ragpoison_sdk import RagPoisonClient
+
+client = RagPoisonClient("http://localhost:8000")
+users = client.list_users(limit=5)
+recs = client.recommend(user_id=users[0].user_id, mode="baseline", k=10)
+trace = client.trace(user_id=users[0].user_id, mode="attacked", k_retrieval=20)
+```
+
+[Sources: sdk/python/ragpoison_sdk/client.py, sdk/python/ragpoison_sdk/types.py]
+
+## Development
+
+### Code style and static checks
+
+- Python dependencies include `ruff` and `mypy`; no project-level tool configuration file is currently present in this repo root.  
+  [Sources: api/pyproject.toml, repository file listing]
+- Web type checks are available via:
+
+```bash
+npm --prefix web run typecheck
+```
+
+[Source: web/package.json]
+
+### Testing
+
+Default test run (integration tests excluded by default marker expression):
+
+```bash
+uv run pytest
+```
+
+Run integration tests explicitly:
+
+```bash
+uv run pytest -m integration
+```
+
+Marker and default selection behavior are defined in `pytest.ini`.
+
+[Sources: pytest.ini, test/smoke/test_stack_up.py, test/smoke/test_recs_roundtrip.py]
+
+### Debugging tips
+
+- Use wizard `Environment checks` for dataset path, data write permissions, Elasticsearch/Kibana/Ollama reachability, and provider secret presence.  
+  [Source: api/app/cli/wizard.py]
+- Use `index stats` to verify index existence and document counts.  
+  [Sources: api/app/cli/commands_index.py, api/app/services/indexing_service.py]
+- Use Kibana to inspect `movies*` indices.  
+  [Source: docker/docker-compose.yml]
+
+### Implementation-status TODO
+
+TODO: confirm whether these zero-length placeholders are intentional roadmap stubs or deprecated artifacts:
+
+- `rag/retrieval/es_client.py`
+- `rag/retrieval/mappings.py`
+- `rag/retrieval/query_builder.py`
+- `rag/retrieval/schemas.py`
+- `api/app/services/attack_service.py`
+- `common/schemas/rec_types.py`
+- `common/utils/fs.py`
+- `common/utils/validation.py`
+- `agent/policies/attack_profiles.py`
+- `tools/tmdb_enrich.py`
+- `docker/scripts/bootstrap_local_models.sh`
+- `conf/app_defaults.yaml`
+
+## CI and releases
+
+TODO: no CI workflow definitions or release automation files were found (for example under `.github/workflows/`).
+
+## Troubleshooting
+
+- `503` from user/profile/history/recommendation/trace endpoints can occur if required parquet files are missing. Run `data prepare` first.  
+  [Sources: api/app/routers/users.py, api/app/routers/recs.py, api/app/routers/trace.py, api/app/services/users_service.py]
+- Recommendation/trace quality may look empty or unexpected if indices are missing or stale. Rebuild with `index both` or compose `indexer`.  
+  [Sources: api/app/cli/commands_index.py, docker/docker-compose.yml]
+- `index reset` refuses to run without explicit confirmation flag:
+
+```bash
+uv run --project api python -m api.app.cli.cli index reset --yes
+```
+
+[Source: api/app/cli/commands_index.py]
+
+- Cloud providers can fail selection/save if key files are missing for the selected provider.  
+  [Sources: api/app/routers/settings_llm.py, api/app/llm/registry.py]
+
+## Contributing
+
+No `CONTRIBUTING.md` or documented branch/commit policy is present in this repository.
+
+Suggested minimum workflow:
+
+1. Run unit tests: `uv run pytest`
+2. Run integration tests when changing stack behavior: `uv run pytest -m integration`
+3. Run web typecheck for frontend changes: `npm --prefix web run typecheck`
+
+TODO: maintainers should document preferred branching strategy, review expectations, and release process.
+
+## License
+
+TODO: no `LICENSE` file or explicit license metadata was found in repository packaging files.
