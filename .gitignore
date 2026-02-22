@@ -1,0 +1,13 @@
+.venv/
+node_modules/
+
+data/processed/*
+data/results/*
+
+secrets/
+
+web/dist/
+api/app/static/
+
+ml-100/
+__pycache__/
