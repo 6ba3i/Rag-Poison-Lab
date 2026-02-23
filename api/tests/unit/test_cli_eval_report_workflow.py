@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from api.app.cli import commands_index, commands_report
 from api.app.cli.cli import app as cli_app
+from api.app.eval import runner as eval_runner
 from api.app.eval.reporting import generate_reports
 from api.app.eval.runner import run_experiments
 from api.app.settings import Settings
@@ -270,3 +271,140 @@ def test_report_command_dispatch(monkeypatch) -> None:
     result = runner.invoke(cli_app, ["report", "generate", "--label", "run_1"])
     assert result.exit_code == 0
     assert "summary_path" in result.output
+
+
+def test_eval_runner_passes_registry_to_recs_service(monkeypatch, tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    captured: dict[str, object] = {}
+
+    class CapturingRecsService:
+        def __init__(self, *, settings, es_client, llm_registry) -> None:
+            captured["settings"] = settings
+            captured["es_client"] = es_client
+            captured["llm_registry"] = llm_registry
+
+        def recommend(self, *, user_id: int, mode: str, k: int) -> list[dict[str, object]]:
+            del user_id, mode, k
+            return [{"movie_id": 2}]
+
+    monkeypatch.setattr(eval_runner, "RecsService", CapturingRecsService)
+
+    result = run_experiments(
+        mode="single",
+        label="registry_wiring",
+        user_id=1,
+        batch_size=1,
+        k=10,
+        settings=settings,
+        es_client=FakeElasticsearch(),
+        results_root=tmp_path / "runs",
+    )
+
+    assert result["evaluated_users"] == 1
+    assert captured.get("llm_registry") is not None
+
+
+def test_eval_runner_rerank_preflight_reports_unreachable_local_ollama(monkeypatch, tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    settings = Settings(
+        data_root=settings.resolved_data_root,
+        config_root=settings.resolved_config_dir,
+        processed_root=settings.resolved_processed_dir,
+        ollama_base_url="http://ollama:11434",
+    )
+    settings.resolved_llm_config_path.write_text(
+        json.dumps(
+            {
+                "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+                "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+                "ranking_mode": "llm_rerank",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class UnreachableLocalRegistry:
+        def __init__(self, *, settings: Settings) -> None:
+            del settings
+
+        def get_victim_client(self) -> object:
+            return object()
+
+        def ollama_connectivity(self) -> bool:
+            return False
+
+        def list_local_models(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(eval_runner, "LlmRegistry", UnreachableLocalRegistry)
+
+    try:
+        run_experiments(
+            mode="single",
+            label="preflight_unreachable_local",
+            user_id=1,
+            batch_size=1,
+            k=10,
+            settings=settings,
+            es_client=FakeElasticsearch(),
+            results_root=tmp_path / "runs",
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError for unreachable local Ollama preflight")
+
+    assert "provider=local" in message
+    assert "model=qwen2.5:1.5b" in message
+    assert "base_url=http://ollama:11434" in message
+    assert "Set OLLAMA_BASE_URL=http://localhost:11434 when running uv on host." in message
+
+
+def test_eval_runner_rerank_preflight_reports_missing_local_model(monkeypatch, tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    settings.resolved_llm_config_path.write_text(
+        json.dumps(
+            {
+                "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+                "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+                "ranking_mode": "llm_rerank",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class MissingModelRegistry:
+        def __init__(self, *, settings: Settings) -> None:
+            self.settings = settings
+
+        def get_victim_client(self) -> object:
+            return object()
+
+        def ollama_connectivity(self) -> bool:
+            return True
+
+        def list_local_models(self) -> list[str]:
+            return ["phi3:mini"]
+
+    monkeypatch.setattr(eval_runner, "LlmRegistry", MissingModelRegistry)
+
+    try:
+        run_experiments(
+            mode="single",
+            label="preflight_missing_model",
+            user_id=1,
+            batch_size=1,
+            k=10,
+            settings=settings,
+            es_client=FakeElasticsearch(),
+            results_root=tmp_path / "runs",
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError for missing local Ollama model")
+
+    assert "provider=local" in message
+    assert "model=qwen2.5:1.5b" in message
+    assert f"base_url={settings.ollama_base_url}" in message
+    assert "Run: ollama pull qwen2.5:1.5b" in message

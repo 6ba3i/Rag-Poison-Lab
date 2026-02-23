@@ -4,12 +4,15 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from api.app.eval.metrics import asr_at_k, hr_at_k, mean_metrics, metrics_delta, mrr_at_k, ndcg_at_k
-from api.app.services.recs_service import RecsService
+from api.app.llm.registry import LlmRegistry
+from api.app.services.recs_service import RecsService, load_llm_config
 from api.app.services.users_service import UsersService
 from api.app.settings import Settings, get_es_client, get_settings
 from common.schemas.attack_config import load_attack_config
+from common.schemas.llm_config import LlmConfig
 
 EvalMode = Literal["single", "batch", "full"]
 METRIC_KEYS: tuple[str, ...] = ("hr", "ndcg", "mrr", "asr")
@@ -33,9 +36,10 @@ def run_experiments(
 
     resolved_settings = settings or get_settings()
     resolved_es_client = es_client if es_client is not None else get_es_client()
+    llm_registry = LlmRegistry(settings=resolved_settings)
 
     users_service = UsersService(settings=resolved_settings)
-    recs_service = RecsService(settings=resolved_settings, es_client=resolved_es_client, llm_registry=None)
+    recs_service = RecsService(settings=resolved_settings, es_client=resolved_es_client, llm_registry=llm_registry)
 
     selected_user_ids = _resolve_user_ids(
         users_service=users_service,
@@ -45,6 +49,13 @@ def run_experiments(
     )
 
     relevant_by_user = _build_relevant_movies_map(users_service)
+    llm_config = load_llm_config(settings=resolved_settings)
+    _validate_eval_victim_llm_config(
+        llm_config=llm_config,
+        settings=resolved_settings,
+        llm_registry=llm_registry,
+    )
+
     attack_config = load_attack_config((resolved_settings.resolved_config_dir / "attack_config.json").resolve())
     target_movie_id = attack_config.target_movie_id
 
@@ -218,3 +229,51 @@ def _normalize_label(label: str) -> str:
 def _default_run_label() -> str:
     now = datetime.now(timezone.utc)
     return now.strftime("run_%Y%m%d_%H%M%S")
+
+
+def _validate_eval_victim_llm_config(
+    *,
+    llm_config: LlmConfig,
+    settings: Settings,
+    llm_registry: LlmRegistry,
+) -> None:
+    if llm_config.ranking_mode != "llm_rerank":
+        return
+
+    provider = llm_config.victim.provider
+    model = llm_config.victim.model
+    base_url = settings.ollama_base_url
+
+    try:
+        client = llm_registry.get_victim_client()
+    except Exception as exc:  # noqa: BLE001
+        message = f"Victim LLM preflight failed: provider={provider}, model={model}"
+        if provider == "local":
+            message += f", base_url={base_url}"
+        message += f". Unable to initialize client: {type(exc).__name__}: {exc}"
+        raise RuntimeError(message) from exc
+
+    if provider == "local":
+        if not llm_registry.ollama_connectivity():
+            message = (
+                "Victim LLM preflight failed: "
+                f"provider={provider}, model={model}, base_url={base_url}. Ollama is unreachable."
+            )
+            host = (urlparse(base_url).hostname or "").strip().lower()
+            if host == "ollama":
+                message += " Hint: Set OLLAMA_BASE_URL=http://localhost:11434 when running uv on host."
+            raise RuntimeError(message)
+
+        available_models = llm_registry.list_local_models()
+        if model not in available_models:
+            raise RuntimeError(
+                "Victim LLM preflight failed: "
+                f"provider={provider}, model={model}, base_url={base_url}. "
+                f"Model '{model}' not found at {base_url}. Run: ollama pull {model}"
+            )
+        return
+
+    status = client.healthcheck()
+    if not status.available or not status.healthy:
+        reason = status.message.strip() or "Provider healthcheck failed."
+        raise RuntimeError(f"Victim LLM preflight failed: provider={provider}, model={model}. {reason}")
