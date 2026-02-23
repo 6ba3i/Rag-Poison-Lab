@@ -9,5 +9,4 @@ secrets/
 web/dist/
 api/app/static/
 
-ml-100/
 __pycache__/
