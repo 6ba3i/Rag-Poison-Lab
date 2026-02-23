@@ -111,6 +111,23 @@ def test_out_of_range_indices_trigger_fallback() -> None:
     assert result.rerank_fallback is True
 
 
+def test_missing_llm_client_warning_can_be_suppressed(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.clear()
+    caplog.set_level("WARNING")
+
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=None,
+        log_victim_unavailable=False,
+    )
+
+    assert result.rerank_fallback is True
+    assert "LLM rerank fallback: victim LLM client unavailable" not in caplog.text
+
+
 def test_duplicate_indices_dedup_and_fill() -> None:
     result = rank_candidates_for_mode(
         context=_context(),

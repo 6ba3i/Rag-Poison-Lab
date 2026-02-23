@@ -104,6 +104,7 @@ def rank_candidates_for_mode(
     ranking_mode: RankingMode,
     k: int,
     llm_client: Any | None,
+    log_victim_unavailable: bool = True,
 ) -> RankingResult:
     deterministic_ranked = rank_candidates(candidates=candidates, user_top_genres=context.top_genres, k=max(k, len(candidates)))
     deterministic_top = deterministic_ranked[:k]
@@ -126,7 +127,8 @@ def rank_candidates_for_mode(
     trace_prompt = _truncate(rerank_prompt, RERANK_PROMPT_TRACE_MAX_CHARS)
 
     if llm_client is None:
-        logger.warning("LLM rerank fallback: victim LLM client unavailable")
+        if log_victim_unavailable:
+            logger.warning("LLM rerank fallback: victim LLM client unavailable")
         return RankingResult(
             ranking_mode=ranking_mode,
             ranked=deterministic_top,
@@ -215,6 +217,7 @@ class RecsService:
         self.settings = settings
         self.es_client = es_client
         self.llm_registry = llm_registry
+        self._rerank_victim_unavailable_warned = False
 
     def recommend(self, *, user_id: int, mode: str, k: int) -> list[dict[str, Any]]:
         users_service = UsersService(settings=self.settings)
@@ -256,12 +259,18 @@ class RecsService:
                     break
 
         victim_client = self._get_victim_client()
+        log_victim_unavailable = True
+        if llm_config.ranking_mode == "llm_rerank" and victim_client is None:
+            log_victim_unavailable = not self._rerank_victim_unavailable_warned
+            self._rerank_victim_unavailable_warned = True
+
         ranking = rank_candidates_for_mode(
             context=context,
             candidates=candidates,
             ranking_mode=llm_config.ranking_mode,
             k=k,
             llm_client=victim_client,
+            log_victim_unavailable=log_victim_unavailable,
         )
 
         explanations = generate_explanations(
