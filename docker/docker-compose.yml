@@ -39,6 +39,8 @@ services:
 
   ollama:
     image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    ports:
+      - "127.0.0.1:11434:11434/tcp"
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -48,6 +50,20 @@ services:
       retries: 30
       start_period: 20s
     restart: unless-stopped
+
+  ollama_init:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sh /workspace/docker/scripts/bootstrap_local_models.sh"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_DEFAULT_MODEL: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}
+    volumes:
+      - ../docker/scripts:/workspace/docker/scripts:ro
+    restart: "no"
 
   app:
     build:
@@ -59,6 +75,8 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
+      ollama_init:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:

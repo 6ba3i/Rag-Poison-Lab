@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
     elasticsearch_url: str = "http://elasticsearch:9200"
-    ollama_base_url: str = "http://ollama:11434"
+    ollama_base_url: str = "http://localhost:11434"
 
     chatgpt_api_key_file: Path = Path("/run/secrets/chatgpt_api_key")
     claude_api_key_file: Path = Path("/run/secrets/claude_api_key")

@@ -147,7 +147,7 @@ docker build -t ragpoison:dev -f Dockerfile .
 | Name | Required | Default | Description | Where used |
 |---|---|---|---|---|
 | `ELASTICSEARCH_URL` | No | `http://elasticsearch:9200` | Elasticsearch base URL for app/indexing. | `api/app/settings.py`, `api/app/services/indexing_service.py`, `docker/docker-compose.yml` |
-| `OLLAMA_BASE_URL` | No | `http://ollama:11434` | Local Ollama base URL. | `api/app/settings.py`, `docker/docker-compose.yml` |
+| `OLLAMA_BASE_URL` | No | `http://localhost:11434` | Local Ollama base URL (host mode default). Docker compose app service overrides this to `http://ollama:11434`. | `api/app/settings.py`, `docker/docker-compose.yml` |
 | `CHATGPT_API_KEY_FILE` | Conditional | `/run/secrets/chatgpt_api_key` | File path for ChatGPT key. Required only if ChatGPT provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_chatgpt.py` |
 | `CLAUDE_API_KEY_FILE` | Conditional | `/run/secrets/claude_api_key` | File path for Claude key. Required only if Claude provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_claude.py` |
 | `GEMINI_API_KEY_FILE` | Conditional | `/run/secrets/gemini_api_key` | File path for Gemini key. Required only if Gemini provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_gemini.py` |
@@ -235,6 +235,8 @@ Start long-lived services:
 ```bash
 docker compose -f docker/docker-compose.yml up -d --build
 ```
+
+Host mode (`uv run` on your machine) uses `http://localhost:11434` and requires Ollama reachable on that port. Compose publishes Ollama only on `127.0.0.1:11434` for host access, while services inside the Docker network use `http://ollama:11434`.
 
 Run one-shot indexer profile:
 
