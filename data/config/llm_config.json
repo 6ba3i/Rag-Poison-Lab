@@ -3,7 +3,7 @@
     "model": "qwen2.5:1.5b",
     "provider": "local"
   },
-  "ranking_mode": "deterministic",
+  "ranking_mode": "llm_rerank",
   "victim": {
     "model": "qwen2.5:1.5b",
     "provider": "local"
