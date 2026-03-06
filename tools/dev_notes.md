@@ -7,24 +7,27 @@
 - Docker Engine and Docker Compose plugin
 - Run all commands from repo root
 
-## Secrets Setup
+## Secrets Setup (Env-First)
 
-Create provider secret files under `./secrets/`:
-
-- `chatgpt_api_key.txt`
-- `claude_api_key.txt`
-- `gemini_api_key.txt`
-- `qwen_api_key.txt`
-
-Each file must contain only the raw key string (no labels, no JSON).
+Use `.env` as the primary credentials source:
 
 ```bash
-mkdir -p secrets
-printf '%s' 'YOUR_CHATGPT_KEY' > secrets/chatgpt_api_key.txt
-printf '%s' 'YOUR_CLAUDE_KEY' > secrets/claude_api_key.txt
-printf '%s' 'YOUR_GEMINI_KEY' > secrets/gemini_api_key.txt
-printf '%s' 'YOUR_QWEN_KEY' > secrets/qwen_api_key.txt
+cp .env.example .env
 ```
+
+Set provider keys in `.env`:
+
+- `CHATGPT_API_KEY`
+- `CLAUDE_API_KEY`
+- `GEMINI_API_KEY`
+- `QWEN_API_KEY`
+
+Optional shared transit config:
+
+- `OPENAI_COMPAT_BASE_URL`
+- `OPENAI_COMPAT_API_KEY`
+
+Legacy fallback (deprecated): provider secret files under `./secrets/` are still supported for one deprecation cycle via `*_API_KEY_FILE`.
 
 ## Start the Stack
 
@@ -35,7 +38,14 @@ docker compose -f docker/docker-compose.yml up -d --build
 ## Run the Wizard
 
 ```bash
-uv run python -m api.app.cli.cli wizard
+docker compose -f docker/docker-compose.yml exec RagPoison uv run --project api python -m api.app.cli.cli wizard
+```
+
+Optional host-run mode (dev, publish Elasticsearch first):
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d --build
+ELASTICSEARCH_URL=http://localhost:9200 uv run --project api python -m api.app.cli.cli wizard
 ```
 
 ## Index and Run Evaluation
@@ -89,5 +99,8 @@ Expected indices:
   - If Elasticsearch fails to start on low-memory hosts, lower both values consistently (for example `-Xms512m -Xmx512m`) and restart.
 - Elasticsearch health:
   - `yellow` cluster health is acceptable for this single-node setup.
+- Elasticsearch DNS context:
+  - `elasticsearch` is a Docker Compose service hostname and resolves only inside compose containers.
+  - Host-shell commands should use `http://localhost:9200` when Elasticsearch is published (for example via `docker/docker-compose.dev.yml`).
 - Ollama model missing:
-  - Use the wizard (`uv run python -m api.app.cli.cli wizard`) and run the local model install/pull flow in the LLM configuration screens.
+  - Use the wizard (`docker compose -f docker/docker-compose.yml exec RagPoison uv run --project api python -m api.app.cli.cli wizard`) and run the local model install/pull flow in the LLM configuration screens.

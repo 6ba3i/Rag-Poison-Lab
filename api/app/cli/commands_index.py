@@ -5,6 +5,7 @@ from typing import Any
 
 import typer
 
+from agent.datasets.poison_builder import ensure_poisoned_bulk_fresh
 from api.app.cli.commands_attack import build_poisoned
 from api.app.data.paths import ES_BULK_POISONED_MOVIES_JSONL, resolve_default_processed_dir
 from api.app.services.indexing_service import (
@@ -45,9 +46,19 @@ def index_poisoned(
     build_if_missing: bool = False,
 ) -> dict[str, Any]:
     processed_path = _resolve_path(processed_dir)
+    refresh = ensure_poisoned_bulk_fresh(
+        processed_dir=processed_path,
+        attack_config_path=_resolve_path(attack_config),
+    )
     if build_if_missing:
+        # Backward-compatible behavior: callers using --build-if-missing
+        # still get a harmless no-op path when the file is already fresh.
         _build_poisoned_if_missing(processed_dir=processed_path, attack_config=attack_config)
-    return index_poisoned_direct(es_url=es_url, processed_dir=processed_path)
+    indexed = index_poisoned_direct(es_url=es_url, processed_dir=processed_path)
+    return {
+        "poisoned_bulk_refresh": refresh,
+        "indexing": indexed,
+    }
 
 
 def index_both(
@@ -108,7 +119,7 @@ def index_poisoned_command(
     build_if_missing: bool = typer.Option(
         False,
         "--build-if-missing",
-        help="Build poisoned bulk first if es_bulk_poisoned_movies.jsonl is missing",
+        help="Deprecated compatibility flag. Poisoned bulk is now auto-refreshed when stale.",
     ),
 ) -> None:
     """Index poisoned movies into Elasticsearch index `movies_poisoned`."""
@@ -130,7 +141,7 @@ def index_both_command(
     build_if_missing: bool = typer.Option(
         False,
         "--build-if-missing",
-        help="Build poisoned bulk first if es_bulk_poisoned_movies.jsonl is missing",
+        help="Deprecated compatibility flag. Poisoned bulk is now auto-refreshed when stale.",
     ),
 ) -> None:
     """Index baseline and poisoned datasets, then print index stats."""

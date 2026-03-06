@@ -4,14 +4,38 @@ from functools import lru_cache
 from pathlib import Path
 
 from elasticsearch import Elasticsearch
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        extra="ignore",
+        env_file=(".env.key", ".env"),
+        env_file_encoding="utf-8",
+    )
 
-    elasticsearch_url: str = "http://elasticsearch:9200"
+    elasticsearch_url: str = "http://localhost:9200"
+    elasticsearch_username: str | None = None
+    elasticsearch_password: str | None = None
+    elasticsearch_api_key: str | None = None
+    elasticsearch_verify_ssl: bool = True
+    elasticsearch_ca_bundle: Path | None = None
+    elasticsearch_timeout_seconds: float = Field(default=10.0, gt=0)
     ollama_base_url: str = "http://localhost:11434"
+    ollama_timeout_seconds: float = Field(default=60.0, gt=0)
+
+    openai_compat_base_url: str | None = None
+    openai_compat_api_key: str | None = None
+    chatgpt_base_url: str | None = None
+    chatgpt_api_key: str | None = None
+    claude_base_url: str | None = None
+    claude_api_key: str | None = None
+    gemini_base_url: str | None = None
+    gemini_api_key: str | None = None
+    qwen_base_url: str | None = None
+    qwen_api_key: str | None = None
 
     chatgpt_api_key_file: Path = Path("/run/secrets/chatgpt_api_key")
     claude_api_key_file: Path = Path("/run/secrets/claude_api_key")
@@ -82,14 +106,50 @@ def get_settings() -> Settings:
     return Settings()
 
 
-@lru_cache(maxsize=4)
-def _build_es_client(es_url: str) -> Elasticsearch:
-    return Elasticsearch(es_url)
+def _normalize_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+@lru_cache(maxsize=8)
+def _build_es_client(
+    es_url: str,
+    *,
+    api_key: str | None,
+    username: str | None,
+    password: str | None,
+    verify_ssl: bool,
+    ca_bundle: Path | None,
+    timeout_seconds: float,
+) -> Elasticsearch:
+    client_kwargs: dict[str, object] = {
+        "verify_certs": verify_ssl,
+        "request_timeout": timeout_seconds,
+    }
+    if verify_ssl and ca_bundle is not None:
+        client_kwargs["ca_certs"] = str(ca_bundle)
+
+    if api_key is not None:
+        client_kwargs["api_key"] = api_key
+    elif username is not None and password is not None:
+        client_kwargs["basic_auth"] = (username, password)
+
+    return Elasticsearch(es_url, **client_kwargs)
 
 
 def get_es_client() -> Elasticsearch:
     settings = get_settings()
-    return _build_es_client(settings.elasticsearch_url)
+    return _build_es_client(
+        settings.elasticsearch_url,
+        api_key=_normalize_optional(settings.elasticsearch_api_key),
+        username=_normalize_optional(settings.elasticsearch_username),
+        password=_normalize_optional(settings.elasticsearch_password),
+        verify_ssl=settings.elasticsearch_verify_ssl,
+        ca_bundle=settings.elasticsearch_ca_bundle.resolve() if settings.elasticsearch_ca_bundle is not None else None,
+        timeout_seconds=float(settings.elasticsearch_timeout_seconds),
+    )
 
 
 @lru_cache(maxsize=1)

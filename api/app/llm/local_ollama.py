@@ -76,6 +76,11 @@ class LocalOllamaProvider(LlmProvider):
             response = httpx.post(_generate_url(self.base_url), json=payload, timeout=self.timeout)
             response.raise_for_status()
             body = response.json()
+        except httpx.TimeoutException as exc:
+            raise RuntimeError(
+                f"Ollama request timed out after {self.timeout:.1f}s "
+                f"(model={self.model}, base_url={self.base_url})"
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Ollama request failed: {exc}") from exc
 

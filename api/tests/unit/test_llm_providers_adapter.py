@@ -26,6 +26,24 @@ class FakeResponse:
         return self._payload
 
 
+def _build_settings_for_registry(tmp_path: Path, **overrides: object) -> Settings:
+    data_dir = tmp_path / "data"
+    config_dir = data_dir / "config"
+    conf_dir = tmp_path / "conf"
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    conf_dir.mkdir(parents=True, exist_ok=True)
+    (conf_dir / "llm_models.yaml").write_text("chatgpt:\n  - gpt-4o-mini\n", encoding="utf-8")
+
+    defaults: dict[str, object] = {
+        "data_root": data_dir,
+        "config_root": config_dir,
+        "llm_models_file": conf_dir / "llm_models.yaml",
+    }
+    defaults.update(overrides)
+    return Settings(**defaults)
+
+
 def test_local_ollama_provider_health_list_and_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     captured_payload: dict[str, object] = {}
 
@@ -115,7 +133,7 @@ def test_cloud_provider_missing_key_and_mvp_stub(tmp_path: Path) -> None:
     chatgpt = ChatGptProvider(model="gpt-4o", api_key_file=missing_secret, curated_models=[])
     status = chatgpt.healthcheck()
     assert status.available is False
-    with pytest.raises(RuntimeError, match="missing API key secret file"):
+    with pytest.raises(RuntimeError, match="missing API key"):
         chatgpt.generate(prompt="hello")
 
     qwen_secret = tmp_path / "qwen_api_key.txt"
@@ -126,6 +144,134 @@ def test_cloud_provider_missing_key_and_mvp_stub(tmp_path: Path) -> None:
     assert qwen_status.healthy is False
     with pytest.raises(NotImplementedError, match="not implemented in MVP"):
         qwen.generate(prompt="hello")
+
+
+def test_registry_chatgpt_env_only_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = _build_settings_for_registry(
+        tmp_path,
+        chatgpt_api_key="env-openai-key",
+        chatgpt_api_key_file=tmp_path / "missing_chatgpt_api_key.txt",
+    )
+    registry = LlmRegistry(settings=settings)
+    monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])
+
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return FakeResponse(200, {"choices": [{"message": {"content": "env output"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+
+    options = {item.provider: item for item in registry.list_provider_options()}
+    assert options["chatgpt"].available is True
+
+    client = registry.get_provider_client(provider="chatgpt", model="gpt-4o-mini")
+    text = client.generate(prompt="hello")
+    assert text == "env output"
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer env-openai-key"
+
+
+def test_registry_chatgpt_file_fallback_logs_deprecation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret_file = tmp_path / "chatgpt_api_key.txt"
+    secret_file.write_text("file-only-key\n", encoding="utf-8")
+    settings = _build_settings_for_registry(
+        tmp_path,
+        chatgpt_api_key_file=secret_file,
+    )
+    registry = LlmRegistry(settings=settings)
+    monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])
+
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["headers"] = headers
+        return FakeResponse(200, {"choices": [{"message": {"content": "file output"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+
+    caplog.set_level("WARNING")
+    client = registry.get_provider_client(provider="chatgpt", model="gpt-4o-mini")
+    text = client.generate(prompt="hello")
+    assert text == "file output"
+
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer file-only-key"
+    assert "deprecated API key file fallback" in caplog.text
+    assert str(secret_file) in caplog.text
+    assert "file-only-key" not in caplog.text
+
+
+def test_registry_chatgpt_prefers_env_over_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret_file = tmp_path / "chatgpt_api_key.txt"
+    secret_file.write_text("file-key\n", encoding="utf-8")
+    settings = _build_settings_for_registry(
+        tmp_path,
+        chatgpt_api_key="env-key-wins",
+        chatgpt_api_key_file=secret_file,
+    )
+    registry = LlmRegistry(settings=settings)
+    monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])
+
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["headers"] = headers
+        return FakeResponse(200, {"choices": [{"message": {"content": "env wins"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+
+    caplog.set_level("WARNING")
+    client = registry.get_provider_client(provider="chatgpt", model="gpt-4o-mini")
+    client.generate(prompt="hello")
+
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer env-key-wins"
+    assert "deprecated API key file fallback" not in caplog.text
+
+
+def test_registry_chatgpt_uses_shared_openai_compat_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = _build_settings_for_registry(
+        tmp_path,
+        openai_compat_api_key="shared-transit-key",
+        openai_compat_base_url="https://gateway.example/v1",
+        chatgpt_api_key_file=tmp_path / "missing_chatgpt_api_key.txt",
+    )
+    registry = LlmRegistry(settings=settings)
+    monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])
+
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["url"] = url
+        captured["headers"] = headers
+        return FakeResponse(200, {"choices": [{"message": {"content": "shared output"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+
+    client = registry.get_provider_client(provider="chatgpt", model="gpt-4o-mini")
+    output = client.generate(prompt="hello")
+    assert output == "shared output"
+
+    assert captured["url"] == "https://gateway.example/v1/chat/completions"
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer shared-transit-key"
 
 
 def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -161,6 +307,7 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
         data_root=data_dir,
         config_root=config_dir,
         llm_models_file=conf_dir / "llm_models.yaml",
+        ollama_timeout_seconds=77.0,
         chatgpt_api_key_file=secrets_dir / "chatgpt_api_key.txt",
         claude_api_key_file=secrets_dir / "claude_api_key.txt",
         gemini_api_key_file=secrets_dir / "gemini_api_key.txt",
@@ -185,6 +332,7 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
     attacker_client = registry.get_attacker_client()
     assert victim_client.provider_name == "local"
     assert victim_client.model == "phi3:mini"
+    assert getattr(victim_client, "timeout", None) == 77.0
     assert attacker_client.provider_name == "chatgpt"
     assert attacker_client.model == "gpt-4o"
 
@@ -200,3 +348,4 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
     assert victim_client_after.model == "gpt-4o-mini"
     assert attacker_client_after.provider_name == "local"
     assert attacker_client_after.model == "qwen2.5:1.5b"
+    assert getattr(attacker_client_after, "timeout", None) == 77.0

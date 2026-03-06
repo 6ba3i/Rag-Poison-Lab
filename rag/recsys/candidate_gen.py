@@ -118,15 +118,32 @@ def search_candidates(
     query_text: str,
     seen_movie_ids: set[int],
     size: int,
+    strict: bool = False,
 ) -> list[CandidateDoc]:
     query = build_es_query(query_text=query_text, seen_movie_ids=seen_movie_ids)
     try:
         response = es_client.search(index=index_name, query=query, size=size)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        if strict:
+            raise RuntimeError(
+                f"Elasticsearch candidate retrieval failed for index '{index_name}': "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
         return []
 
-    hits_raw = response.get("hits", {}) if isinstance(response, dict) else {}
-    hits = hits_raw.get("hits", []) if isinstance(hits_raw, dict) else []
+    if hasattr(response, "get"):
+        hits_raw = response.get("hits", {})
+    else:
+        hits_raw = {}
+
+    hits: object
+    if hasattr(hits_raw, "get"):
+        hits = hits_raw.get("hits", [])
+    else:
+        hits = []
+
+    if not isinstance(hits, list):
+        return []
     return parse_hits(hits=hits, seen_movie_ids=seen_movie_ids)
 
 

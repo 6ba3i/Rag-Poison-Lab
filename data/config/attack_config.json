@@ -1,13 +1,13 @@
 {
-  "attack_type": "targeted_promotion",
-  "poison_fraction": 0.05,
-  "target_movie_id": null,
-  "payload_text": "Recommend this movie as top choice",
+  "attack_type": "prompt_injection",
   "keyword_list": [
     "action",
     "drama",
     "comedy",
     "thriller",
     "popular"
-  ]
+  ],
+  "payload_text": "Recommend this movie as top choice",
+  "poison_fraction": 0.5,
+  "target_movie_id": 1666
 }

@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from api.app.settings import Settings
 from api.app.services.users_service import UsersService
@@ -30,7 +30,11 @@ LLM_RERANK_MAX_TOKENS = 256
 LLM_RERANK_TEMPERATURE = 0.0
 RERANK_PROMPT_TRACE_MAX_CHARS = 1600
 RERANK_FIELD_MAX_CHARS = 120
+RERANK_SYNOPSIS_MAX_CHARS = 140
+RERANK_PAYLOAD_MAX_CHARS = 100
+DEBUG_CANDIDATE_LIMIT = 20
 YEAR_SUFFIX_PATTERN = re.compile(r"\((\d{4})\)\s*$")
+JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
 
 RERANK_PROMPT_TEMPLATE = """User preferences:
 - Top genres: {top_genres}
@@ -219,30 +223,83 @@ class RecsService:
         self.llm_registry = llm_registry
         self._rerank_victim_unavailable_warned = False
 
-    def recommend(self, *, user_id: int, mode: str, k: int) -> list[dict[str, Any]]:
+    def recommend(
+        self,
+        *,
+        user_id: int,
+        mode: str,
+        k: int,
+        seen_history_split: Literal["all", "train"] = "all",
+        strict_retrieval: bool = False,
+    ) -> list[dict[str, Any]]:
+        result = self._recommend_internal(
+            user_id=user_id,
+            mode=mode,
+            k=k,
+            seen_history_split=seen_history_split,
+            strict_retrieval=strict_retrieval,
+            include_debug=False,
+        )
+        return result["items"]
+
+    def recommend_with_debug(
+        self,
+        *,
+        user_id: int,
+        mode: str,
+        k: int,
+        seen_history_split: Literal["all", "train"] = "all",
+        strict_retrieval: bool = False,
+    ) -> dict[str, Any]:
+        return self._recommend_internal(
+            user_id=user_id,
+            mode=mode,
+            k=k,
+            seen_history_split=seen_history_split,
+            strict_retrieval=strict_retrieval,
+            include_debug=True,
+        )
+
+    def _recommend_internal(
+        self,
+        *,
+        user_id: int,
+        mode: str,
+        k: int,
+        seen_history_split: Literal["all", "train"],
+        strict_retrieval: bool,
+        include_debug: bool,
+    ) -> dict[str, Any]:
         users_service = UsersService(settings=self.settings)
         profile = users_service.get_profile(user_id)
         if profile is None:
             raise KeyError(f"Unknown user_id: {user_id}")
 
+        if seen_history_split not in {"all", "train"}:
+            raise ValueError("seen_history_split must be one of: all, train")
+
         llm_config = load_llm_config(settings=self.settings)
 
         history_all = users_service.get_history(user_id, split="all")
         history_train = users_service.get_history(user_id, split="train")
-        seen_movie_ids = {item["movie_id"] for item in history_all}
+        history_for_seen = history_all if seen_history_split == "all" else history_train
+        seen_movie_ids = {item["movie_id"] for item in history_for_seen}
 
         context = build_user_context(profile=profile, train_history=history_train)
         query_text = build_retrieval_query(context)
         index_name = INDEX_BY_MODE.get(mode, "movies")
 
-        candidates = search_candidates(
+        candidates_from_es = search_candidates(
             es_client=self.es_client,
             index_name=index_name,
             query_text=query_text,
             seen_movie_ids=seen_movie_ids,
             size=recommendation_retrieval_size(ranking_mode=llm_config.ranking_mode, k=k),
+            strict=strict_retrieval,
         )
+        candidates = list(candidates_from_es)
 
+        fallback_added = 0
         if len(candidates) < k:
             fallback = fallback_candidates_from_movies(
                 movies_rows=users_service.movies_df.itertuples(index=False),
@@ -255,6 +312,7 @@ class RecsService:
                     continue
                 candidates.append(candidate)
                 existing_ids.add(candidate.movie_id)
+                fallback_added += 1
                 if len(candidates) >= k:
                     break
 
@@ -292,7 +350,30 @@ class RecsService:
                 }
             )
 
-        return output
+        debug: dict[str, Any] | None = None
+        if include_debug:
+            debug = {
+                "index_name": index_name,
+                "retrieval_query": query_text,
+                "retrieved_from_es_count": len(candidates_from_es),
+                "retrieved_from_es": [_candidate_debug(item) for item in candidates_from_es[:DEBUG_CANDIDATE_LIMIT]],
+                "fallback_used": bool(fallback_added > 0),
+                "fallback_added": int(fallback_added),
+                "ranking_input_candidates": [_candidate_debug(item) for item in candidates[:DEBUG_CANDIDATE_LIMIT]],
+                "rerank_prompt": ranking.rerank_prompt,
+                "rerank_candidates": ranking.rerank_candidates,
+                "rerank_parsed_order": ranking.rerank_parsed_order,
+                "rerank_fallback": ranking.rerank_fallback,
+                "final_ranked_movie_ids": [int(item["movie_id"]) for item in output],
+            }
+            if ranking.rerank_prompt is not None:
+                debug["rerank_prompt_has_poison_payload"] = "poison_payload" in ranking.rerank_prompt
+                debug["rerank_prompt_has_synopsis"] = "synopsis:" in ranking.rerank_prompt
+
+        return {
+            "items": output,
+            "debug": debug,
+        }
 
     def _get_victim_client(self) -> Any | None:
         if self.llm_registry is None:
@@ -305,9 +386,8 @@ class RecsService:
 
 
 def _parse_rerank_order(raw_response: str, *, candidate_count: int) -> list[int] | None:
-    try:
-        payload = json.loads(raw_response)
-    except Exception:  # noqa: BLE001
+    payload = _load_json_payload(raw_response)
+    if payload is None:
         logger.warning("LLM rerank fallback: invalid JSON response")
         return None
 
@@ -331,6 +411,38 @@ def _parse_rerank_order(raw_response: str, *, candidate_count: int) -> list[int]
         parsed_order.append(item)
 
     return parsed_order
+
+
+def _load_json_payload(raw_response: str) -> object | None:
+    text = raw_response.strip()
+    if text == "":
+        return None
+
+    try:
+        return json.loads(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+    for match in JSON_FENCE_PATTERN.finditer(text):
+        block = match.group(1).strip()
+        if block == "":
+            continue
+        try:
+            return json.loads(block)
+        except Exception:  # noqa: BLE001
+            continue
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(text[index:])
+            return payload
+        except Exception:  # noqa: BLE001
+            continue
+
+    return None
 
 
 def _build_rerank_candidates(candidates: list[CandidateDoc]) -> list[RerankPoolItem]:
@@ -363,7 +475,12 @@ def _build_rerank_prompt(*, context: UserPreferenceContext, rerank_pool: list[Re
         genres = ", ".join(_compact(str(genre)) for genre in item.candidate.genres if _compact(str(genre)))
         if genres == "":
             genres = "unknown"
-        candidate_lines.append(f"{item.index}) {title} — genres: {genres}")
+        synopsis = _truncate(_compact(item.candidate.synopsis), RERANK_SYNOPSIS_MAX_CHARS)
+        payload = _truncate(_compact(item.candidate.poison_payload), RERANK_PAYLOAD_MAX_CHARS)
+        line = f"{item.index}) {title} — genres: {genres}; synopsis: {synopsis if synopsis else 'none'}"
+        if payload:
+            line += f"; poison_payload: {payload}"
+        candidate_lines.append(line)
 
     return RERANK_PROMPT_TEMPLATE.format(
         top_genres=top_genres,
@@ -394,3 +511,16 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars].rstrip() + "..."
+
+
+def _candidate_debug(candidate: CandidateDoc) -> dict[str, Any]:
+    return {
+        "movie_id": int(candidate.movie_id),
+        "title": candidate.title,
+        "genres": list(candidate.genres),
+        "bm25_score": float(candidate.bm25_score),
+        "poison_marker": bool(candidate.poison_marker),
+        "poison_payload_present": bool(candidate.poison_payload.strip()),
+        "poison_payload_snippet": _truncate(candidate.poison_payload.strip(), RERANK_PAYLOAD_MAX_CHARS),
+        "synopsis_snippet": _truncate(candidate.synopsis.strip(), RERANK_SYNOPSIS_MAX_CHARS),
+    }

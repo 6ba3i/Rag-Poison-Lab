@@ -5,6 +5,10 @@ data/processed/*
 data/results/*
 
 secrets/
+.env
+.env.local
+.env.key
+.env.*.local
 
 web/dist/
 api/app/static/

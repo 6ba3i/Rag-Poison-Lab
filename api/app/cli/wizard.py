@@ -21,7 +21,9 @@ from api.app.cli.commands_index import index_baseline, index_both, index_poisone
 from api.app.cli.commands_report import generate_report_artifacts
 from api.app.data.paths import ES_BULK_POISONED_MOVIES_JSONL, MOVIES_PARQUET, resolve_default_dataset_dir, resolve_default_processed_dir
 from api.app.eval.reporting import list_run_labels
+from api.app.llm.credentials import resolve_api_key
 from api.app.llm.registry import LlmRegistry
+from api.app.services.indexing_service import preflight_es
 from api.app.settings import Settings, get_settings
 from common.schemas.attack_config import AttackConfig, default_attack_config, load_attack_config
 from common.schemas.llm_config import LlmConfig, LlmRoleConfig, RankingMode, default_llm_config
@@ -79,13 +81,25 @@ def _environment_checks_screen() -> None:
     settings = get_settings()
     registry = LlmRegistry(settings=settings)
 
-    workspace_dataset = Path("/workspace/ml-100")
-    workspace_data = Path("/workspace/data")
+    dataset_dir = resolve_default_dataset_dir()
+    data_root = settings.resolved_data_root
     kibana_url = _kibana_url()
 
     checks: list[dict[str, str]] = []
-    checks.append(_check_path_exists("/workspace/ml-100 exists", workspace_dataset, fix="Bind-mount ./ml-100 to /workspace/ml-100"))
-    checks.append(_check_writable_dir("/workspace/data writable", workspace_data, fix="Bind-mount ./data to /workspace/data with write access"))
+    checks.append(
+        _check_path_exists(
+            "Dataset directory exists",
+            dataset_dir,
+            fix=_path_fix_hint(path=dataset_dir, host_fix="Ensure ./ml-100 exists in the repo root."),
+        )
+    )
+    checks.append(
+        _check_writable_dir(
+            "Data directory writable",
+            data_root,
+            fix=_path_fix_hint(path=data_root, host_fix="Ensure ./data exists and is writable in the repo root."),
+        )
+    )
     checks.append(
         _check_http(
             "Elasticsearch reachable",
@@ -112,14 +126,28 @@ def _environment_checks_screen() -> None:
         }
     )
 
+    provider_env_key = {
+        "chatgpt": "CHATGPT_API_KEY",
+        "claude": "CLAUDE_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "qwen": "QWEN_API_KEY",
+    }
     for provider, secret_path in settings.provider_secret_paths.items():
-        exists = secret_path.exists() and secret_path.is_file() and secret_path.stat().st_size > 0
+        api_key, source = resolve_api_key(provider_name=provider, settings=settings, warn_on_file_fallback=False)
+        exists = api_key is not None
+        if source.startswith("file:"):
+            detail = f"{source} ({secret_path}) [deprecated fallback]"
+        elif source.startswith("env:"):
+            detail = source
+        else:
+            detail = "missing"
+        env_name = provider_env_key.get(provider, "API_KEY")
         checks.append(
             {
                 "name": f"Secret present: {provider}",
                 "status": "PASS" if exists else "WARN",
-                "detail": str(secret_path),
-                "fix": f"Create Docker secret file for {provider} (or keep provider disabled)",
+                "detail": detail,
+                "fix": f"Set {env_name} in .env/.env.key (legacy fallback: {secret_path})",
             }
         )
 
@@ -248,6 +276,16 @@ def _indexing_screen() -> None:
             return
 
         es_url = _prompt_text("Elasticsearch URL", settings.elasticsearch_url)
+        try:
+            banner = preflight_es(es_url=es_url)
+            version = banner.get("version") or "unknown"
+            name = banner.get("name") or "unknown"
+            typer.echo(f"Elasticsearch preflight OK: {name} (version: {version})")
+        except Exception as exc:  # noqa: BLE001
+            typer.echo(f"Elasticsearch preflight failed: {exc}")
+            _wait_for_enter()
+            continue
+
         processed_dir = _prompt_path("Processed directory", resolve_default_processed_dir())
 
         if choice == "baseline":
@@ -547,6 +585,13 @@ def _http_get_ok(url: str, timeout: int = 3) -> bool:
         return 200 <= exc.code < 400
     except Exception:  # noqa: BLE001
         return False
+
+
+def _path_fix_hint(*, path: Path, host_fix: str) -> str:
+    resolved = path.resolve()
+    if resolved == Path("/workspace") or Path("/workspace") in resolved.parents:
+        return f"Bind-mount ./{path.name} to {resolved}"
+    return host_fix
 
 
 def _load_llm_config(settings: Settings) -> LlmConfig:

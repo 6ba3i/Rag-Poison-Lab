@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import random
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -11,11 +12,14 @@ from api.app.llm.registry import LlmRegistry
 from api.app.services.recs_service import RecsService, load_llm_config
 from api.app.services.users_service import UsersService
 from api.app.settings import Settings, get_es_client, get_settings
-from common.schemas.attack_config import load_attack_config
+from common.schemas.attack_config import AttackConfig, load_attack_config
 from common.schemas.llm_config import LlmConfig
 
 EvalMode = Literal["single", "batch", "full"]
-METRIC_KEYS: tuple[str, ...] = ("hr", "ndcg", "mrr", "asr")
+BASE_METRIC_KEYS: tuple[str, ...] = ("hr", "ndcg", "mrr")
+ASR_METRIC_KEY = "asr"
+AUTO_TARGET_POOL_SIZE = 20
+AUTO_TARGET_PICK_SEED = 42
 
 
 def run_experiments(
@@ -57,10 +61,18 @@ def run_experiments(
     )
 
     attack_config = load_attack_config((resolved_settings.resolved_config_dir / "attack_config.json").resolve())
-    target_movie_id = attack_config.target_movie_id
+    target_movie_id, eval_warnings, target_movie_source = _resolve_target_movie_id(
+        attack_config=attack_config,
+        users_service=users_service,
+    )
+    eval_warnings.extend(_validate_poisoned_index_state(es_client=resolved_es_client, attack_config=attack_config))
+    asr_applicable = bool(attack_config.attack_type == "targeted_promotion" and target_movie_id is not None)
+    metric_keys: tuple[str, ...] = BASE_METRIC_KEYS + ((ASR_METRIC_KEY,) if asr_applicable else tuple())
 
     per_user_rows: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    attack_trace_payload: dict[str, Any] | None = None
+    attack_trace_path: Path | None = None
 
     for current_user_id in selected_user_ids:
         relevant = relevant_by_user.get(current_user_id, set())
@@ -69,8 +81,40 @@ def run_experiments(
             continue
 
         try:
-            baseline = recs_service.recommend(user_id=current_user_id, mode="baseline", k=k)
-            attacked = recs_service.recommend(user_id=current_user_id, mode="attacked", k=k)
+            if mode == "single":
+                baseline_result = recs_service.recommend_with_debug(
+                    user_id=current_user_id,
+                    mode="baseline",
+                    k=k,
+                    seen_history_split="train",
+                    strict_retrieval=True,
+                )
+                attacked_result = recs_service.recommend_with_debug(
+                    user_id=current_user_id,
+                    mode="attacked",
+                    k=k,
+                    seen_history_split="train",
+                    strict_retrieval=True,
+                )
+                baseline = baseline_result["items"]
+                attacked = attacked_result["items"]
+            else:
+                baseline = recs_service.recommend(
+                    user_id=current_user_id,
+                    mode="baseline",
+                    k=k,
+                    seen_history_split="train",
+                    strict_retrieval=True,
+                )
+                attacked = recs_service.recommend(
+                    user_id=current_user_id,
+                    mode="attacked",
+                    k=k,
+                    seen_history_split="train",
+                    strict_retrieval=True,
+                )
+                baseline_result = {"debug": None}
+                attacked_result = {"debug": None}
         except Exception as exc:  # noqa: BLE001
             skipped.append({"user_id": current_user_id, "reason": f"recommendation_error: {exc}"})
             continue
@@ -82,35 +126,77 @@ def run_experiments(
             "hr": hr_at_k(baseline_ids, relevant, k),
             "ndcg": ndcg_at_k(baseline_ids, relevant, k),
             "mrr": mrr_at_k(baseline_ids, relevant, k),
-            "asr": asr_at_k(baseline_ids, target_movie_id, k),
         }
         attacked_metrics = {
             "hr": hr_at_k(attacked_ids, relevant, k),
             "ndcg": ndcg_at_k(attacked_ids, relevant, k),
             "mrr": mrr_at_k(attacked_ids, relevant, k),
-            "asr": asr_at_k(attacked_ids, target_movie_id, k),
         }
+        if asr_applicable:
+            baseline_metrics[ASR_METRIC_KEY] = asr_at_k(baseline_ids, target_movie_id, k)
+            attacked_metrics[ASR_METRIC_KEY] = asr_at_k(attacked_ids, target_movie_id, k)
+
+        overlap = _candidate_overlap_at_k(baseline_ids=baseline_ids, attacked_ids=attacked_ids, k=k)
+        target_rank_baseline = _rank_of_target(recommended=baseline_ids, target_movie_id=target_movie_id, k=k)
+        target_rank_attacked = _rank_of_target(recommended=attacked_ids, target_movie_id=target_movie_id, k=k)
+        target_rank_lift = _target_rank_lift(
+            baseline_rank=target_rank_baseline,
+            attacked_rank=target_rank_attacked,
+        )
 
         per_user_rows.append(
             {
                 "user_id": current_user_id,
                 "relevant_test_count": len(relevant),
+                "candidate_overlap_at_k": round(overlap, 6),
+                "target_rank_baseline": target_rank_baseline,
+                "target_rank_attacked": target_rank_attacked,
+                "target_rank_lift": target_rank_lift,
                 "baseline": _round_metrics(baseline_metrics),
                 "attacked": _round_metrics(attacked_metrics),
                 "delta": _round_metrics(metrics_delta(baseline=baseline_metrics, attacked=attacked_metrics)),
             }
         )
 
+        if mode == "single":
+            attack_trace_payload = {
+                "mode": mode,
+                "user_id": int(current_user_id),
+                "k": int(k),
+                "attack_config": attack_config.model_dump(),
+                "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
+                "target_movie_source": target_movie_source,
+                "asr_applicable": asr_applicable,
+                "baseline_index": "movies",
+                "attacked_index": "movies_poisoned",
+                "relevant_test_movie_ids": sorted(int(item) for item in relevant),
+                "baseline_debug": baseline_result.get("debug"),
+                "attacked_debug": attacked_result.get("debug"),
+                "metrics_input": {
+                    "baseline_ids": baseline_ids,
+                    "attacked_ids": attacked_ids,
+                    "baseline_metrics": _round_metrics(baseline_metrics),
+                    "attacked_metrics": _round_metrics(attacked_metrics),
+                    "delta_metrics": _round_metrics(metrics_delta(baseline=baseline_metrics, attacked=attacked_metrics)),
+                    "candidate_overlap_at_k": round(overlap, 6),
+                    "target_rank_baseline": target_rank_baseline,
+                    "target_rank_attacked": target_rank_attacked,
+                    "target_rank_lift": target_rank_lift,
+                },
+            }
+
     if not per_user_rows:
+        reason_text = _summarize_skip_reasons(skipped)
         raise RuntimeError(
-            "No users were evaluated. Ensure processed files exist and selected users have test split rows."
+            "No users were evaluated. Ensure processed files exist and selected users have test split rows. "
+            f"Observed skip reasons: {reason_text}"
         )
 
     baseline_aggregate = _round_metrics(
-        mean_metrics([row["baseline"] for row in per_user_rows], METRIC_KEYS)
+        mean_metrics([row["baseline"] for row in per_user_rows], metric_keys)
     )
     attacked_aggregate = _round_metrics(
-        mean_metrics([row["attacked"] for row in per_user_rows], METRIC_KEYS)
+        mean_metrics([row["attacked"] for row in per_user_rows], metric_keys)
     )
     delta_aggregate = _round_metrics(metrics_delta(baseline=baseline_aggregate, attacked=attacked_aggregate))
 
@@ -118,6 +204,9 @@ def run_experiments(
     run_dir = resolve_run_dir(settings=resolved_settings, label=run_label, results_root=results_root)
     run_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = run_dir / "metrics.json"
+    if attack_trace_payload is not None:
+        attack_trace_path = run_dir / "attack_trace.json"
+        attack_trace_path.write_text(json.dumps(attack_trace_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     payload: dict[str, Any] = {
         "label": run_label,
@@ -127,9 +216,16 @@ def run_experiments(
         "evaluated_users": len(per_user_rows),
         "skipped_users": len(skipped),
         "metadata": {
+            "attack_type": attack_config.attack_type,
             "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
-            "asr_applicable": bool(target_movie_id is not None),
-            "metric_keys": list(METRIC_KEYS),
+            "target_movie_source": target_movie_source,
+            "asr_applicable": asr_applicable,
+            "asr_applicable_reason": (
+                "targeted_promotion_with_target"
+                if asr_applicable
+                else f"attack_type={attack_config.attack_type} does not use ASR as primary success metric"
+            ),
+            "metric_keys": list(metric_keys),
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         },
         "baseline": baseline_aggregate,
@@ -138,10 +234,14 @@ def run_experiments(
         "per_user": per_user_rows,
         "skipped": skipped,
     }
+    if eval_warnings:
+        payload["warnings"] = list(eval_warnings)
+    if attack_trace_path is not None:
+        payload["attack_trace_path"] = str(attack_trace_path)
 
     metrics_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    return {
+    summary = {
         "label": run_label,
         "run_dir": str(run_dir),
         "metrics_path": str(metrics_path),
@@ -154,7 +254,15 @@ def run_experiments(
         "attacked": attacked_aggregate,
         "delta": delta_aggregate,
         "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
+        "target_movie_source": target_movie_source,
+        "asr_applicable": asr_applicable,
+        "metric_keys": list(metric_keys),
     }
+    if eval_warnings:
+        summary["warnings"] = list(eval_warnings)
+    if attack_trace_path is not None:
+        summary["attack_trace_path"] = str(attack_trace_path)
+    return summary
 
 
 def resolve_run_dir(*, settings: Settings, label: str, results_root: Path | None = None) -> Path:
@@ -209,6 +317,137 @@ def _extract_movie_ids(items: list[dict[str, Any]]) -> list[int]:
         except Exception:  # noqa: BLE001
             continue
     return output
+
+
+def _resolve_target_movie_id(
+    *,
+    attack_config: AttackConfig,
+    users_service: UsersService,
+) -> tuple[int | None, list[str], str]:
+    configured_target = attack_config.target_movie_id
+    if configured_target is not None:
+        return int(configured_target), [], "configured"
+
+    if attack_config.attack_type != "targeted_promotion":
+        return None, [], "none"
+
+    selected = _auto_pick_target_movie_id(users_service=users_service)
+    warnings = [
+        "target_movie_id is not set for attack_type=targeted_promotion; "
+        f"auto-selected deterministic target_movie_id={selected} (seed={AUTO_TARGET_PICK_SEED}). "
+        "Set data/config/attack_config.json:target_movie_id to avoid automatic selection."
+    ]
+    return selected, warnings, "auto_selected"
+
+
+def _auto_pick_target_movie_id(*, users_service: UsersService) -> int:
+    movies = users_service.movies_df.copy()
+    if movies.empty or "movie_id" not in movies.columns:
+        raise RuntimeError(
+            "Unable to auto-select target_movie_id: processed movies.parquet is missing/empty or lacks movie_id. "
+            "Run data prepare first."
+        )
+
+    ids: list[int] = []
+    for raw in movies["movie_id"].tolist():
+        try:
+            ids.append(int(raw))
+        except Exception:  # noqa: BLE001
+            continue
+    if not ids:
+        raise RuntimeError(
+            "Unable to auto-select target_movie_id: no valid movie IDs found in processed movies.parquet. "
+            "Run data prepare first."
+        )
+
+    pool = sorted(set(ids))[:AUTO_TARGET_POOL_SIZE]
+    return int(random.Random(AUTO_TARGET_PICK_SEED).choice(pool))
+
+
+def _summarize_skip_reasons(skipped: list[dict[str, Any]], *, max_reasons: int = 3) -> str:
+    if not skipped:
+        return "none"
+    counts: dict[str, int] = {}
+    for item in skipped:
+        reason = str(item.get("reason", "unknown")).strip() or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    ordered = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+    top = ordered[:max_reasons]
+    return "; ".join(f"{reason} (x{count})" for reason, count in top)
+
+
+def _validate_poisoned_index_state(*, es_client: Any, attack_config: AttackConfig) -> list[str]:
+    if float(attack_config.poison_fraction) <= 0.0:
+        return []
+    if not hasattr(es_client, "count"):
+        return [
+            "Poisoned index validation skipped because es_client.count is unavailable; "
+            "cannot confirm poison_marker coverage."
+        ]
+
+    try:
+        response = es_client.count(index="movies_poisoned", query={"term": {"poison_marker": True}})
+        poison_marked = int(response.get("count", 0)) if hasattr(response, "get") else 0
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "Attack validation failed while checking movies_poisoned poison markers: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+
+    if poison_marked <= 0:
+        raise RuntimeError(
+            "Attack validation failed: movies_poisoned contains zero poison_marker=true docs. "
+            "Rebuild poisoned bulk and reindex before running eval. "
+            "Run: uv run --project api python -m api.app.cli.cli attack build-poisoned "
+            "&& uv run --project api python -m api.app.cli.cli index poisoned"
+        )
+    return [f"Validated poisoned index: poison_marker=true docs={poison_marked}"]
+
+
+def _top_k_ids(recommended: list[int], k: int) -> list[int]:
+    output: list[int] = []
+    seen: set[int] = set()
+    for raw in recommended:
+        value = int(raw)
+        if value in seen:
+            continue
+        seen.add(value)
+        output.append(value)
+        if len(output) >= k:
+            break
+    return output
+
+
+def _candidate_overlap_at_k(*, baseline_ids: list[int], attacked_ids: list[int], k: int) -> float:
+    if k <= 0:
+        return 0.0
+    left = set(_top_k_ids(baseline_ids, k))
+    right = set(_top_k_ids(attacked_ids, k))
+    if not left and not right:
+        return 1.0
+    union = left | right
+    if not union:
+        return 0.0
+    return len(left & right) / float(len(union))
+
+
+def _rank_of_target(*, recommended: list[int], target_movie_id: int | None, k: int) -> int | None:
+    if target_movie_id is None or k <= 0:
+        return None
+    for rank, movie_id in enumerate(_top_k_ids(recommended, k), start=1):
+        if int(movie_id) == int(target_movie_id):
+            return rank
+    return None
+
+
+def _target_rank_lift(*, baseline_rank: int | None, attacked_rank: int | None) -> int | None:
+    if baseline_rank is None and attacked_rank is None:
+        return None
+    if baseline_rank is None:
+        return 0
+    if attacked_rank is None:
+        return 0
+    return int(baseline_rank - attacked_rank)
 
 
 def _round_metrics(values: dict[str, float]) -> dict[str, float]:

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
+import socket
+import ssl
 from pathlib import Path
 from typing import Any
-import urllib.error
-import urllib.request
+from urllib.parse import urlparse
+
+import httpx
 
 from api.app.data.paths import (
     ES_BULK_MOVIES_JSONL,
@@ -13,18 +17,84 @@ from api.app.data.paths import (
     REPO_ROOT,
     resolve_output_dir,
 )
+from api.app.settings import Settings, get_settings
 
-DEFAULT_ES_URL = "http://elasticsearch:9200"
+DEFAULT_ES_URL = "http://localhost:9200"
 INDEX_MOVIES = "movies"
 INDEX_MOVIES_POISONED = "movies_poisoned"
 
 MOVIES_MAPPING_PATH = REPO_ROOT / "docker" / "es" / "movies_index.json"
 MOVIES_POISONED_MAPPING_PATH = REPO_ROOT / "docker" / "es" / "movies_poisoned_index.json"
 
+CONNECT_REFUSED_ERRNOS = {111, 61, 10061}
+DNS_ERRNOS = {-2, 8, 11001}
+
+
+@dataclass(frozen=True)
+class _EsHttpConfig:
+    headers: dict[str, str]
+    basic_auth: tuple[str, str] | None
+    verify: bool | str
+    timeout_seconds: float
+
 
 def _resolve_es_url(es_url: str | None = None) -> str:
     resolved = es_url or os.environ.get("ELASTICSEARCH_URL") or DEFAULT_ES_URL
     return resolved.rstrip("/")
+
+
+def _normalize_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _resolve_http_config(settings: Settings | None = None) -> _EsHttpConfig:
+    resolved_settings = settings or get_settings()
+    api_key = _normalize_optional(resolved_settings.elasticsearch_api_key)
+    username = _normalize_optional(resolved_settings.elasticsearch_username)
+    password = _normalize_optional(resolved_settings.elasticsearch_password)
+
+    headers: dict[str, str] = {}
+    basic_auth: tuple[str, str] | None = None
+    if api_key is not None:
+        headers["Authorization"] = f"ApiKey {api_key}"
+    elif username is not None and password is not None:
+        basic_auth = (username, password)
+
+    if not resolved_settings.elasticsearch_verify_ssl:
+        verify: bool | str = False
+    elif resolved_settings.elasticsearch_ca_bundle is not None:
+        verify = str(resolved_settings.elasticsearch_ca_bundle.resolve())
+    else:
+        verify = True
+
+    return _EsHttpConfig(
+        headers=headers,
+        basic_auth=basic_auth,
+        verify=verify,
+        timeout_seconds=float(resolved_settings.elasticsearch_timeout_seconds),
+    )
+
+
+def _host_and_port(url: str) -> tuple[str, int]:
+    parsed = urlparse(url)
+    host = parsed.hostname or "unknown-host"
+    if parsed.port is not None:
+        return host, parsed.port
+    return host, 443 if parsed.scheme == "https" else 80
+
+
+def _iter_exc_chain(exc: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        chain.append(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return chain
 
 
 def _request(
@@ -33,19 +103,131 @@ def _request(
     url: str,
     data: bytes | None = None,
     content_type: str | None = None,
-    timeout: int = 30,
+    timeout: float | None = None,
+    settings: Settings | None = None,
 ) -> tuple[int, bytes]:
-    request = urllib.request.Request(url, data=data, method=method)
+    config = _resolve_http_config(settings=settings)
+    request_timeout = float(timeout) if timeout is not None else config.timeout_seconds
+    headers = dict(config.headers)
     if content_type is not None:
-        request.add_header("Content-Type", content_type)
+        headers["Content-Type"] = content_type
 
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()
-    except urllib.error.URLError as exc:
+        response = httpx.request(
+            method=method,
+            url=url,
+            content=data,
+            headers=headers,
+            auth=config.basic_auth,
+            timeout=request_timeout,
+            verify=config.verify,
+            follow_redirects=True,
+        )
+    except httpx.RequestError as exc:
+        hint = _connection_hint(url, exc=exc)
+        if hint:
+            raise RuntimeError(f"Failed to connect to Elasticsearch at {url}: {exc}\nHint: {hint}") from exc
         raise RuntimeError(f"Failed to connect to Elasticsearch at {url}: {exc}") from exc
+
+    if response.status_code in {401, 403}:
+        hint = _connection_hint(url, status_code=response.status_code)
+        body = response.text.strip()
+        message = (
+            f"Elasticsearch request failed at {url} (HTTP {response.status_code}). "
+            f"{body if body else 'Authentication/authorization failed.'}"
+        )
+        if hint:
+            message = f"{message}\nHint: {hint}"
+        raise RuntimeError(message)
+
+    return response.status_code, response.content
+
+
+def _connection_hint(url: str, exc: Exception | None = None, *, status_code: int | None = None) -> str | None:
+    hostname, port = _host_and_port(url)
+    hostname = hostname.lower()
+
+    if status_code in {401, 403}:
+        return (
+            "Authentication failed. Set ELASTICSEARCH_API_KEY, or ELASTICSEARCH_USERNAME and "
+            "ELASTICSEARCH_PASSWORD. API key auth takes precedence when both are set."
+        )
+
+    if exc is None:
+        return None
+
+    if isinstance(exc, httpx.TimeoutException):
+        return (
+            f"Connection to {hostname}:{port} timed out. Verify network reachability and increase "
+            "ELASTICSEARCH_TIMEOUT_SECONDS if needed."
+        )
+
+    for chain_exc in _iter_exc_chain(exc):
+        if isinstance(chain_exc, ssl.SSLError):
+            return (
+                "TLS handshake/certificate validation failed. Set ELASTICSEARCH_CA_BUNDLE to a trusted "
+                "CA bundle, or set ELASTICSEARCH_VERIFY_SSL=false for local/dev environments."
+            )
+        if isinstance(chain_exc, socket.gaierror) and getattr(chain_exc, "errno", None) in DNS_ERRNOS:
+            if hostname == "elasticsearch":
+                return (
+                    "Hostname 'elasticsearch' is Docker Compose internal DNS. Use it only inside compose containers. "
+                    "From host shell, use http://localhost:9200 (or your external Elasticsearch URL)."
+                )
+            return f"DNS resolution failed for '{hostname}'. Verify the host name and network DNS configuration."
+        if isinstance(chain_exc, OSError):
+            errno = getattr(chain_exc, "errno", None)
+            if errno in CONNECT_REFUSED_ERRNOS:
+                if hostname in {"localhost", "127.0.0.1", "::1"}:
+                    return (
+                        f"Elasticsearch is not listening on {hostname}:{port}. "
+                        "If Docker Compose is running with only docker/docker-compose.yml, port 9200 is not "
+                        "published to the host. For host-run uv commands, publish ES with: "
+                        "docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d --build. "
+                        "If running the wizard inside the RagPoison container, use "
+                        "ELASTICSEARCH_URL=http://elasticsearch:9200."
+                    )
+                return f"Connection refused to {hostname}:{port}. Verify host, port, and firewall/network policy."
+            if errno in DNS_ERRNOS:
+                if hostname == "elasticsearch":
+                    return (
+                        "Hostname 'elasticsearch' is Docker Compose internal DNS. Use it only inside compose containers. "
+                        "From host shell, use http://localhost:9200 (or your external Elasticsearch URL)."
+                    )
+                return f"DNS resolution failed for '{hostname}'. Verify the host name and network DNS configuration."
+
+    message = str(exc).lower()
+    if "certificate verify failed" in message or "tls" in message or "ssl" in message:
+        return (
+            "TLS handshake/certificate validation failed. Set ELASTICSEARCH_CA_BUNDLE to a trusted "
+            "CA bundle, or set ELASTICSEARCH_VERIFY_SSL=false for local/dev environments."
+        )
+    if "name or service not known" in message or "temporary failure in name resolution" in message:
+        return f"DNS resolution failed for '{hostname}'. Verify the host name and network DNS configuration."
+    if "connection refused" in message:
+        return f"Connection refused to {hostname}:{port}. Verify host, port, and Elasticsearch service status."
+
+    return None
+
+
+def preflight_es(*, es_url: str | None = None, settings: Settings | None = None) -> dict[str, Any]:
+    base_url = _resolve_es_url(es_url)
+    status, body = _request(method="GET", url=f"{base_url}/", settings=settings)
+    if status < 200 or status >= 300:
+        raise RuntimeError(
+            f"Elasticsearch preflight failed at {base_url}/ (HTTP {status}): "
+            f"{body.decode('utf-8', errors='replace')}"
+        )
+
+    payload = _parse_json(body, context=f"preflight response for '{base_url}'")
+    version = payload.get("version")
+    version_number = version.get("number") if isinstance(version, dict) else None
+    return {
+        "url": base_url,
+        "name": payload.get("name"),
+        "cluster_name": payload.get("cluster_name"),
+        "version": version_number,
+    }
 
 
 def _parse_json(body: bytes, *, context: str) -> dict[str, Any]:
@@ -171,6 +353,7 @@ def _ensure_index(index_name: str, *, mapping_path: Path, es_url: str) -> None:
 
 def _bulk_index(index_name: str, *, bulk_path: Path, es_url: str) -> dict[str, Any]:
     payload, expected_docs = _load_bulk_payload(bulk_path, index_name=index_name)
+    # Use the global bulk API; each action line already carries its own `_index`.
     bulk_status, bulk_body = _request(
         method="POST",
         url=f"{es_url}/_bulk?refresh=true",

@@ -146,12 +146,23 @@ docker build -t ragpoison:dev -f Dockerfile .
 
 | Name | Required | Default | Description | Where used |
 |---|---|---|---|---|
-| `ELASTICSEARCH_URL` | No | `http://elasticsearch:9200` | Elasticsearch base URL for app/indexing. | `api/app/settings.py`, `api/app/services/indexing_service.py`, `docker/docker-compose.yml` |
+| `ELASTICSEARCH_URL` | No | `http://localhost:9200` | Elasticsearch base URL for app/indexing in host mode. Compose app service overrides this to `http://elasticsearch:9200` for container DNS. | `api/app/settings.py`, `api/app/services/indexing_service.py`, `docker/docker-compose.yml` |
 | `OLLAMA_BASE_URL` | No | `http://localhost:11434` | Local Ollama base URL (host mode default). Docker compose app service overrides this to `http://ollama:11434`. | `api/app/settings.py`, `docker/docker-compose.yml` |
-| `CHATGPT_API_KEY_FILE` | Conditional | `/run/secrets/chatgpt_api_key` | File path for ChatGPT key. Required only if ChatGPT provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_chatgpt.py` |
-| `CLAUDE_API_KEY_FILE` | Conditional | `/run/secrets/claude_api_key` | File path for Claude key. Required only if Claude provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_claude.py` |
-| `GEMINI_API_KEY_FILE` | Conditional | `/run/secrets/gemini_api_key` | File path for Gemini key. Required only if Gemini provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_gemini.py` |
-| `QWEN_API_KEY_FILE` | Conditional | `/run/secrets/qwen_api_key` | File path for Qwen key. Required only if Qwen provider is used. | `api/app/settings.py`, `docker/docker-compose.yml`, `api/app/llm/providers_qwen.py` |
+| `OLLAMA_TIMEOUT_SECONDS` | No | `60` | Timeout for local Ollama generation requests. Increase this if `llm_rerank` prompts time out on slower CPUs. | `api/app/settings.py`, `api/app/llm/registry.py`, `api/app/llm/local_ollama.py` |
+| `OPENAI_COMPAT_BASE_URL` | No | none | Optional shared OpenAI-compatible gateway base URL (transit). Used as fallback for ChatGPT base URL. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `OPENAI_COMPAT_API_KEY` | Conditional | none | Optional shared transit key for OpenAI-compatible providers (`chatgpt`, `claude`, `gemini`) when provider-specific key is unset. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `CHATGPT_BASE_URL` | No | `https://api.openai.com/v1` | ChatGPT/OpenAI-compatible base URL override. | `api/app/settings.py`, `api/app/llm/credentials.py`, `api/app/llm/providers_chatgpt.py`, `docker/docker-compose.yml` |
+| `CHATGPT_API_KEY` | Conditional | none | Primary ChatGPT API key env var. | `api/app/settings.py`, `api/app/llm/credentials.py`, `api/app/llm/providers_chatgpt.py`, `docker/docker-compose.yml` |
+| `CLAUDE_BASE_URL` | No | none | Future-facing Claude base URL override (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `CLAUDE_API_KEY` | Conditional | none | Primary Claude API key env var (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `GEMINI_BASE_URL` | No | none | Future-facing Gemini base URL override (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `GEMINI_API_KEY` | Conditional | none | Primary Gemini API key env var (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `QWEN_BASE_URL` | No | none | Future-facing Qwen base URL override (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `QWEN_API_KEY` | Conditional | none | Primary Qwen API key env var for standalone Qwen access. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `CHATGPT_API_KEY_FILE` | Deprecated fallback | `/run/secrets/chatgpt_api_key` | Legacy file path for ChatGPT key. Used only when env key is absent. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `CLAUDE_API_KEY_FILE` | Deprecated fallback | `/run/secrets/claude_api_key` | Legacy file path for Claude key. Used only when env key is absent. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `GEMINI_API_KEY_FILE` | Deprecated fallback | `/run/secrets/gemini_api_key` | Legacy file path for Gemini key. Used only when env key is absent. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `QWEN_API_KEY_FILE` | Deprecated fallback | `/run/secrets/qwen_api_key` | Legacy file path for Qwen key. Used only when env key is absent. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
 | `DATA_ROOT` | No | auto-resolved | Optional override for data root path. | `api/app/settings.py` |
 | `CONFIG_ROOT` | No | auto-resolved | Optional override for config directory. | `api/app/settings.py` |
 | `PROCESSED_ROOT` | No | auto-resolved | Optional override for processed outputs directory. | `api/app/settings.py` |
@@ -191,12 +202,22 @@ docker build -t ragpoison:dev -f Dockerfile .
 
 ### Secrets and security notes
 
-- Compose mounts provider keys via Docker secrets from `secrets/*.txt` into `/run/secrets/*`.  
+- Env vars are the primary credential source. The app loads `.env` by default and also supports `.env.key` as an optional alias.
+- Compose still mounts provider keys via Docker secrets from `secrets/*.txt` into `/run/secrets/*` for backward compatibility.  
   [Source: docker/docker-compose.yml]
-- Cloud providers are marked unavailable when their secret file is missing.  
+- Legacy `*_API_KEY_FILE` fallback remains available for one deprecation cycle. A warning is logged when file fallback is used.  
+  [Sources: api/app/llm/credentials.py, api/app/llm/registry.py]
+- Cloud providers are marked unavailable when neither env key nor legacy file key is present.  
   [Sources: api/app/llm/registry.py, api/app/routers/settings_llm.py]
 - `claude`, `gemini`, and `qwen` providers are selectable but `generate()` is currently not implemented in this repo version.  
   [Sources: api/app/llm/providers_claude.py, api/app/llm/providers_gemini.py, api/app/llm/providers_qwen.py]
+
+### Migration: `secrets/*.txt` -> `.env`
+
+1. Copy `.env.example` to `.env`.
+2. Set provider keys in `.env` (`CHATGPT_API_KEY`, `CLAUDE_API_KEY`, `GEMINI_API_KEY`, `QWEN_API_KEY`) and optional transit vars (`OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY`).
+3. Keep legacy `secrets/*.txt` only as temporary fallback.
+4. Restart app/compose. Remove old secret files after validation.
 
 ## Running the project
 
@@ -206,12 +227,6 @@ Run API CLI help:
 
 ```bash
 uv run --project api python -m api.app.cli.cli --help
-```
-
-Run interactive workflow wizard:
-
-```bash
-uv run --project api python -m api.app.cli.cli wizard
 ```
 
 Run API server directly:
@@ -226,7 +241,13 @@ Run web dev server:
 npm --prefix web run dev
 ```
 
-[Sources: api/app/cli/cli.py, api/pyproject.toml, Dockerfile, web/package.json]
+Optional host-run wizard command (requires Elasticsearch published to host; see `Optional host-run mode (dev)` below):
+
+```bash
+ELASTICSEARCH_URL=http://localhost:9200 uv run --project api python -m api.app.cli.cli wizard
+```
+
+[Sources: api/app/cli/cli.py, api/pyproject.toml, Dockerfile, web/package.json] 
 
 ### Docker/Compose workflow
 
@@ -235,6 +256,20 @@ Start long-lived services:
 ```bash
 docker compose -f docker/docker-compose.yml up -d --build
 ```
+
+Run interactive workflow wizard (recommended, inside the app container):
+
+```bash
+docker compose -f docker/docker-compose.yml exec RagPoison uv run --project api python -m api.app.cli.cli wizard
+```
+
+Optional host-run mode (dev, explicitly publish Elasticsearch):
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d --build
+```
+
+Then run host commands with `ELASTICSEARCH_URL=http://localhost:9200`.
 
 Host mode (`uv run` on your machine) uses `http://localhost:11434` and requires Ollama reachable on that port. Compose publishes Ollama only on `127.0.0.1:11434` for host access, while services inside the Docker network use `http://ollama:11434`.
 
@@ -255,7 +290,7 @@ Data persistence note:
 - `../data` and `../ml-100` are bind mounts in compose.
 - `es_data` and `ollama_data` are named volumes.
 
-[Source: docker/docker-compose.yml]
+[Sources: docker/docker-compose.yml, docker/docker-compose.dev.yml]
 
 ### Production run notes
 
@@ -427,6 +462,10 @@ TODO: no CI workflow definitions or release automation files were found (for exa
   [Sources: api/app/routers/users.py, api/app/routers/recs.py, api/app/routers/trace.py, api/app/services/users_service.py]
 - Recommendation/trace quality may look empty or unexpected if indices are missing or stale. Rebuild with `index both` or compose `indexer`.  
   [Sources: api/app/cli/commands_index.py, docker/docker-compose.yml]
+- Host shell DNS cannot resolve compose service names like `elasticsearch` by default. Use `http://elasticsearch:9200` only inside compose containers; use `http://localhost:9200` on host when ES is published (for example via `docker/docker-compose.dev.yml`).  
+  [Sources: docker/docker-compose.yml, docker/docker-compose.dev.yml]
+- `eval run` now fails loudly when Elasticsearch retrieval is unreachable/misconfigured instead of silently falling back to local-only candidates. If you run `uv` on host, make sure Elasticsearch is published (`docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d --build`) and indices are present (`index both`).  
+  [Sources: api/app/eval/runner.py, api/app/services/recs_service.py, rag/recsys/candidate_gen.py]
 - `index reset` refuses to run without explicit confirmation flag:
 
 ```bash

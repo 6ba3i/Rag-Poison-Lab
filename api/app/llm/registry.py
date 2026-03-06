@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from api.app.llm.base import LlmProvider, secret_exists
+from api.app.llm.base import LlmProvider
+from api.app.llm.credentials import resolve_api_key, resolve_base_url
 from api.app.llm.local_ollama import LocalOllamaProvider, check_ollama_connectivity, list_ollama_models
 from api.app.llm.providers_chatgpt import ChatGptProvider
 from api.app.llm.providers_claude import ClaudeProvider
@@ -57,10 +58,8 @@ class LlmRegistry:
     def _provider_is_available(self, provider: str) -> bool:
         if provider == "local":
             return True
-        secret_path = self.settings.provider_secret_paths.get(provider)
-        if secret_path is None:
-            return False
-        return _secret_exists(secret_path)
+        api_key, _ = resolve_api_key(provider_name=provider, settings=self.settings, warn_on_file_fallback=False)
+        return api_key is not None
 
     def list_provider_options(self) -> list[LlmProviderOption]:
         cloud_models = self._load_cloud_models()
@@ -84,13 +83,26 @@ class LlmRegistry:
             raise KeyError(f"Unknown provider: {provider}")
 
         if provider == "local":
-            return provider_cls(base_url=self.settings.ollama_base_url, model=model)
+            return provider_cls(
+                base_url=self.settings.ollama_base_url,
+                model=model,
+                timeout=float(self.settings.ollama_timeout_seconds),
+            )
 
         secret_path = self.settings.provider_secret_paths.get(provider)
         if secret_path is None:
             raise KeyError(f"Missing secret path configuration for provider: {provider}")
+
+        resolved_api_key, _ = resolve_api_key(provider_name=provider, settings=self.settings)
+        resolved_base_url, _ = resolve_base_url(provider_name=provider, settings=self.settings)
         curated_models = self._load_cloud_models().get(provider, [])
-        return provider_cls(model=model, api_key_file=secret_path, curated_models=curated_models)
+        return provider_cls(
+            model=model,
+            api_key=resolved_api_key,
+            api_key_file=secret_path,
+            curated_models=curated_models,
+            base_url=resolved_base_url,
+        )
 
     def get_victim_client(self) -> LlmProvider:
         config = self._load_llm_config()
@@ -109,10 +121,6 @@ class LlmRegistry:
             return LlmConfig.model_validate(payload)
         except Exception:  # noqa: BLE001
             return default_llm_config()
-
-
-def _secret_exists(path: Path) -> bool:
-    return secret_exists(path)
 
 
 def _safe_yaml_load(path: Path) -> object:
