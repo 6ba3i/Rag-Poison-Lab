@@ -1,0 +1,36 @@
+\subsection{Environmental Sustainability}
+Rag-Poison-Lab is designed to be run in a modest experiment environment. This directly reduces energy and cloud usage compared with large remote training workflows.
+
+The project is environmentally friendly for the following reasons:
+\begin{itemize}
+  \item \textbf{Local-first execution:} core services (backend, Elasticsearch, indexing, evaluation) all run on one local machine with Docker, so experiments do not depend on cloud based data-center infrastructure.
+  \item \textbf{Selective LLM usage:} most debugging and baseline checks can be tested in deterministic ranking mode or using a local model; paid API models are used only for deeper and meaningful results later one and are not an active part of our development.
+  \item \textbf{Reused artifacts:} We process the dataset \emph{once} and the output is reused throughout the experiment. No need for repeated data preparation.
+  \item \textbf{Hash-based refresh control:} Using our hashing method, the only reason for which the poisoned bulk would have to be rebuilt is if the source bulk changes or our attack configuration changes, which speeds up workflow and avoids being forced to re-index and at every run start.
+  \item \textbf{Staged evaluation:} \texttt{single}, \texttt{batch}, and \texttt{full} modes allow to quickly single out errors instead of having to use expensive ressources waiting for a full batch run. It also allows for simple demos to be shared.
+\end{itemize}
+
+
+\subsection{Project Budget Estimate}
+Table~\ref{tab:budget-cny} shows an estimate of the budget for this project. API costs are for a capped amount of credits and could vary depending on the benchmarking token use. The objective is to not go past these token estimates by oiptimizing prompts to use the least amount of token possible without affecting results.
+
+\begin{table}[H]
+  \centering
+  \caption{Estimated one-semester budget for Rag-Poison-Lab}
+  \label{tab:budget-cny}
+  \begin{tabular}{p{0.32\textwidth} p{0.45\textwidth} r}
+    \toprule
+    Item & Basis of estimate & Cost \\
+    \midrule
+    Local electricity & Modest laptop/workstation with a minimum of 8 cpus and 16gb of ram (ideally 12 cpus and 32gb of ram) in regular daily runs across one semester & 400 \\
+    Storage and backup & External storage/cloud backup for data, metrics, traces, and reports & 500 \\
+    OpenAI API credit & Controlled comparison runs with token cap & 800 \\
+    Claude API credit & Controlled comparison runs with token cap & 1000 \\
+    Gemini API credit & Controlled comparison runs with token cap & 800 \\
+    Qwen API credit & Controlled comparison runs with token cap & 400 \\
+    Miscellaneous buffer & Extra reruns, troubleshooting, small unexpected costs & 250 \\
+    \midrule
+    \textbf{Total} &  & \textbf{4150 RMB} \\
+    \bottomrule
+  \end{tabular}
+\end{table}

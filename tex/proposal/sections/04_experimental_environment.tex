@@ -1,0 +1,92 @@
+\subsection{Docker Engine and Docker Compose}
+
+This thesis does not run one script at a time. It was made efficient by running a stack where each service has a clear role using Docker containers. The Compose file consists of the following services: \texttt{Elasticsearch}, \texttt{Kibana}, \texttt{Ollama}, \texttt{RagPoison image containing my system}, and an \texttt{indexer} profile for one-shot indexing \cite{ragpoisonlab_repo}. The layout is set this way because this recommender system depends on three concurrent states: index state (held by Elasticsearch and Kibana), model state (held by Ollama for local models), and API configuration state (held by my RagPoison image).
+
+The startup order relies on health checks to make sure to avoid any failures when launching containers that depend on each other. The app waits until Elasticsearch and Ollama are reachable, and the indexer waits for Elasticsearch health check before pushing bulk data.
+
+Persistence is also split on purpose:
+\begin{itemize}
+  \item bind mounts for \texttt{data/} and \texttt{ml-100/}, so generated artifacts stay put even after rebuilds avoiding the need to re-parse the dataset;
+  \item named volumes for Elasticsearch and Ollama, so local retrieval and model cache stay stable across restarts.
+\end{itemize}
+This setup simplifies reproducibility across different environments with the same efficiency and avoids repeating the same task at every built image.
+
+\subsection{Python Backend and CLI Workflow}
+
+The backend API is organized by experiment function. Routers will cover health checks, user/profile access, recommendation requests, trace requests, and LLM settings \cite{ragpoisonlab_repo}.
+
+A recommendation request in this project follows a fixed backend flow:
+\begin{itemize}
+  \item load user profile and history;
+  \item build retrieval query text from top genres and liked titles;
+  \item choose index by mode (\texttt{baseline} $\rightarrow$ \texttt{movies}, \texttt{attacked} $\rightarrow$ \texttt{movies\_poisoned});
+  \item retrieve candidates from Elasticsearch while filtering seen movie IDs;
+  \item rank candidates in deterministic mode or \texttt{llm\_rerank} mode depending on user choice;
+  \item return recommendation items plus show debug results.
+\end{itemize}
+
+The \texttt{trace} endpoint uses the same mode-to-index logic. This is meant to achieve a fair comparison since baseline and attacked traces are generated with the same request shape. Thanks to this logic, differences will have a higher chance of being linked to changes coming from retrieval changes rather than being caused API-side issues.
+
+A CLI wizard is also made available for the core extensive testing. It maps all the experiment stages such as \texttt{data}, \texttt{attack}, \texttt{index}, \texttt{eval}, and \texttt{report}. This would be where most of the testing will happen since a CLI interface is more efficient for bulk testing.
+
+\subsection{TypeScript Frontend}
+
+The frontend is based on react and Node.js. It is used to select users, compare baseline vs attacked outputs, view traces, edit runtime settings and its purpose is mainly for displaying demos and visualizing the result of our experiments, while the main logic stay in the backend.
+
+\subsection{Elasticsearch and Kibana}
+
+Elasticsearch is an open-source search engine built on Lucene, and it stores documents in JSON indices and is based on a inverted-index retrieval method \cite{elastic_docs_es}.  In our project ES will be used as our principal retrieval system and the backbone of this project.
+
+We are using Elasticsearch in the context of poisoning and red teaming simply because this project studies harmful retrieval poisoning. If we change document content at the retrieval level then the candidate set can change which will cause our top-$k$ recommendations to be affected. Naturally in our project having access to that retrieval layer is necessary and Elasticsearch gives us the opportunity to temper with it. This tool is used worldwide so it adds a layer of reality to our simulated environment 
+
+In the current implementation, retrieval uses a weighted \texttt{multi\_match} query over:
+\begin{itemize}
+  \item \texttt{title\^3},
+  \item \texttt{genres\^2},
+  \item \texttt{synopsis}.
+\end{itemize}
+The system also applies a \texttt{must\_not} filter to remove movie IDs already seen by the user so we can receive better recommendations instead of repeating old items. Both baselines index and attacked index use BM25 similarity in mapping settings, which is the default lexical ranking for scored text retrieval in Elasticsearch \cite{elastic_docs_es}.
+
+Two index names are defined in code:
+\begin{itemize}
+  \item \texttt{movies} for baseline retrieval,
+  \item \texttt{movies\_poisoned} for attacked retrieval.
+\end{itemize}
+The most important part about the indexing in Rag Poison Lab is the index splitting. This feature allows for A/B comparison without changing endpoints.
+
+The mapping schema will include basic recommendation fields like \texttt{movie\_id}, \texttt{title}, \texttt{genres}, \texttt{synopsis} and poisoning evidence fields like \texttt{poison\_marker}, \texttt{poison\_payload}. Having it present fields this will help with understanding and visualizing attack evidence, it is also included with indexed documents, which will make auditing simpler.
+
+Kibana is the web interface for Elasticsearch \cite{elastic_docs_kibana}. While not being used directly in the ranking or text generation, It will be used for verification before and after runs:
+\begin{itemize}
+  \item check that both indices exist and are healthy,
+  \item inspect document counts for \texttt{movies} and \texttt{movies\_poisoned},
+  \item sample documents in poisoning markers/payload fields for verification,
+  \item run quick ad hoc queries in Dev Tools when debugging retrieval behavior.
+\end{itemize}
+They thus work hand-in-hand, ES will handle retrieval while Kibana makes inspection and verification easier
+
+\subsection{Optional LLM Runtime and re-ranking}
+
+Since the purpose of thesis is to evaluate retrieval poisoning as a whole Rag Poison Lab supports two modes to verify how the poisoning behaves with and without language model re-ranking.
+
+\texttt{deterministic} mode uses local ranking logic using retrieval score and preference overlap and is the essential baseline for this project. It doesn't rely on LLMs for ranking.
+
+\texttt{llm\_rerank} mode builds uses a re-rank prompt based on the retrieved candidates and user preferences. It will then send it to the configured victim model, which parses the candidate order that was received. It then follows up by mapping that order to movie IDs again \cite{ragpoisonlab_repo}. This mode is quite important because showing how poisoned prompts can influence the LLM to return  hostile re-ranked order that goes along the attackers request rather than innocent results. 
+
+The local default runtime is Ollama for current development. This allows for cheap development cost currently before diving into cloud-based solutions when it comes the time to start getting strong metrics. The backend operates with fallbacks: if re-ranking fails, returns invalid JSON, or model access is unavailable, the service falls back to deterministic ranking and records fallback signals for later analysis. 
+
+\subsection{Dataset, Configuration, Outputs, and Reproducibility}
+
+MovieLens 100K is used as the benchmark dataset \cite{harper2015movielens}. The preprocessing writes deterministic outputs into \texttt{data/processed/} which includes user profiles, train/test splits, and Elasticsearch files.
+
+Configuration is purposefully divided by purpose into two JSON files:
+\begin{itemize}
+  \item \texttt{attack\_config.json}: attack type, poison fraction, target movie, and payload-related settings;
+  \item \texttt{llm\_config.json}: victim/attacker providers, models, and ranking mode.
+\end{itemize}
+
+We Evaluate outputs by groups via run label in \texttt{data/results/runs/<label>/}. We store aggregate values, per-user values, and run metadata including attack context in \texttt{metrics.json}, and we store single user runs debug data in \texttt{attack\_trace.json}. Finally, Reports are produced such as \texttt{summary.md}, \texttt{delta.csv}, and snapshots of both config files.
+
+An import  aspect of our project is seamless reproducibility. The system will save SHA-256 hashes the source and attack config. If there's a mismatch in hash we immediately rebuild the poisoned bulk. This helps make sure all runs are consistent and results are trustworthy.
+
+Overall, we make sure our environment is designed in a way that makes all results collected trusted, and the solution to that is to have every part of every step to be documented, from index state and concrete config files to concrete run artifacts.

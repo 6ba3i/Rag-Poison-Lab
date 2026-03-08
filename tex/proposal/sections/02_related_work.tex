@@ -1,0 +1,17 @@
+Related studies that support this thesis fall into four groups.
+
+\textbf{Recommender poisoning attacks.} Early studies show that a harmful actor could change recommendation results by poisoning user interaction data \cite{li2016factorizationpoison}. Later studies found similar risks for graph recommenders and deep recommenders \cite{fang2018graphpoison,huang2021deeppoison}. Other studies even show that an attacker can achieve targeted manipulation for top-$N$ recommendation \cite{fang2020influencepoison}.
+We also notice with PORE that a robustness-based approach for untargeted posisoning can still preserve part of the top-$N$ recommendations even under fake-user injection \cite{jia2023pore}.
+
+\textbf{RAG poisoning and security.} studies like PoisonedRAG show that when retrieval content is corrupted it can change the behavior of the model later on in the RAG pipeline \cite{zou2024poisonedrag,zhang2025corruptrag}, which is why the red team aligns with our proposal.
+The official USENIX version of poisonedRAG  shows that by only using a few injected malicious texts, we can already achieve high attack success, in that case we can see that low-volume poisoning is already practical \cite{zou2025poisonedrag_usenix}. While RevPRAG reports through detection research very strong poisoned-response detection with high true-positive and low false-positive results using multiple RAG setups \cite{tan2025revprag}.
+
+\textbf{Recommendation-specific RAG poisoning.} Poison-RAG studies retrieval poisoning in a recommender system showing that it can cause heavy output shift in the final response\cite{nazary2025poisonrag}. This is close to the problem we are trying to target with Rag Poison Lab.
+Poison-RAG also highlights that modifying local metadata can be even more effective than global ones in black-box experiments, which supports using different poisoning methods and granularities in our setup \cite{nazary2025poisonrag}. Other research articles like EMNLP on LLM recommenders, show that the order of interactions and re-ranking through LLMs can also affect the recommendation system greatly \cite{wang2024elmrec}.
+
+\textbf{Evaluation metrics for ranked recommendation.} HR, MRR, and NDCG are valid and strong metrics that are used in many studies that aim to measure RAG poisoning, which fits the same goal we are trying to achieve \cite{herlocker2004evaluating,wang2013ndcg}.
+
+Looking at the previous mentioned studies, we can see that this proposal offers a system that links attack generation, index-level A/B switching, trace inspection, and report export in one single system that can cater to answering all our questions on the subject.
+
+
+
