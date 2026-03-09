@@ -6,6 +6,7 @@
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{hyperref}
+\usepackage{fancyhdr}
 \usepackage{iftex}
 \ifPDFTeX
   \usepackage[utf8]{inputenc}
@@ -20,6 +21,17 @@
 \setstretch{1.05}
 \setlength{\parskip}{0.1em}
 \setlength{\parindent}{1.2em}
+\setlength{\headheight}{14.5pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[C]{Red-Teaming Large Language Model-Powered Recommendation Systems (Thesis Proposal)}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyhead[C]{Red-Teaming Large Language Model-Powered Recommendation Systems (Thesis Proposal)}
+  \renewcommand{\headrulewidth}{0.4pt}
+}
 
 \hypersetup{
   colorlinks=true,
@@ -37,6 +49,7 @@
 \begin{document}
 
 \maketitle
+\thispagestyle{empty}
 
 \begin{abstract}
 \input{sections/abstract}

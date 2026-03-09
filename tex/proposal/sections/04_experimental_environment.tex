@@ -6,8 +6,8 @@ The startup order relies on health checks to make sure to avoid any failures whe
 
 Persistence is also split on purpose:
 \begin{itemize}
-  \item bind mounts for \texttt{data/} and \texttt{ml-100/}, so generated artifacts stay put even after rebuilds avoiding the need to re-parse the dataset;
-  \item named volumes for Elasticsearch and Ollama, so local retrieval and model cache stay stable across restarts.
+  \item Bind mounts for \texttt{data/} and \texttt{ml-100/}, so generated artifacts stay put even after rebuilds avoiding the need to re-parse the dataset;
+  \item Named volumes for Elasticsearch and Ollama, so local retrieval and model cache stay stable across restarts.
 \end{itemize}
 This setup simplifies reproducibility across different environments with the same efficiency and avoids repeating the same task at every built image.
 
@@ -17,12 +17,12 @@ The backend API is organized by experiment function. Routers will cover health c
 
 A recommendation request in this project follows a fixed backend flow:
 \begin{itemize}
-  \item load user profile and history;
-  \item build retrieval query text from top genres and liked titles;
-  \item choose index by mode (\texttt{baseline} $\rightarrow$ \texttt{movies}, \texttt{attacked} $\rightarrow$ \texttt{movies\_poisoned});
-  \item retrieve candidates from Elasticsearch while filtering seen movie IDs;
-  \item rank candidates in deterministic mode or \texttt{llm\_rerank} mode depending on user choice;
-  \item return recommendation items plus show debug results.
+  \item Load user profile and history;
+  \item Build retrieval query text from top genres and liked titles;
+  \item Choose index by mode (\texttt{baseline} $\rightarrow$ \texttt{movies}, \texttt{attacked} $\rightarrow$ \texttt{movies\_poisoned});
+  \item Retrieve candidates from Elasticsearch while filtering seen movie IDs;
+  \item Rank candidates in deterministic mode or \texttt{llm\_rerank} mode depending on user choice;
+  \item Return recommendation items plus show debug results.
 \end{itemize}
 
 The \texttt{trace} endpoint uses the same mode-to-index logic. This is meant to achieve a fair comparison since baseline and attacked traces are generated with the same request shape. Thanks to this logic, differences will have a higher chance of being linked to changes coming from retrieval changes rather than being caused API-side issues.
@@ -52,22 +52,22 @@ Two index names are defined in code:
   \item \texttt{movies} for baseline retrieval,
   \item \texttt{movies\_poisoned} for attacked retrieval.
 \end{itemize}
-The most important part about the indexing in Rag Poison Lab is the index splitting. This feature allows for A/B comparison without changing endpoints.
+The most important part about the indexing in RAG Poison Lab is the index splitting. This feature allows for A/B comparison without changing endpoints.
 
 The mapping schema will include basic recommendation fields like \texttt{movie\_id}, \texttt{title}, \texttt{genres}, \texttt{synopsis} and poisoning evidence fields like \texttt{poison\_marker}, \texttt{poison\_payload}. Having it present fields this will help with understanding and visualizing attack evidence, it is also included with indexed documents, which will make auditing simpler.
 
 Kibana is the web interface for Elasticsearch \cite{elastic_docs_kibana}. While not being used directly in the ranking or text generation, It will be used for verification before and after runs:
 \begin{itemize}
-  \item check that both indices exist and are healthy,
-  \item inspect document counts for \texttt{movies} and \texttt{movies\_poisoned},
-  \item sample documents in poisoning markers/payload fields for verification,
-  \item run quick ad hoc queries in Dev Tools when debugging retrieval behavior.
+  \item Check that both indices exist and are healthy,
+  \item Inspect document counts for \texttt{movies} and \texttt{movies\_poisoned},
+  \item Sample documents in poisoning markers/payload fields for verification,
+  \item Run quick ad hoc queries in Dev Tools when debugging retrieval behavior.
 \end{itemize}
 They thus work hand-in-hand, ES will handle retrieval while Kibana makes inspection and verification easier
 
 \subsection{Optional LLM Runtime and re-ranking}
 
-Since the purpose of thesis is to evaluate retrieval poisoning as a whole Rag Poison Lab supports two modes to verify how the poisoning behaves with and without language model re-ranking.
+Since the purpose of thesis is to evaluate retrieval poisoning as a whole RAG Poison Lab supports two modes to verify how the poisoning behaves with and without language model re-ranking.
 
 \texttt{deterministic} mode uses local ranking logic using retrieval score and preference overlap and is the essential baseline for this project. It doesn't rely on LLMs for ranking.
 

@@ -2,7 +2,7 @@
 
 We evaluate by comparing baseline and attacked runs following these conditions: the same users, same $K$, same ranking system (simple or LLM), and the same processed dataset snapshot. We are using the following metrics: HR@K, NDCG@K, and MRR@K, which are standard for recommender and ranking analysis \cite{herlocker2004evaluating,wang2013ndcg}, They will show us how the attack affects the quality of the recommendation output.
 
-to better measure and get a greater understanding of the attacks impact, we will also report ASR@K when targeted promotion is active, candidate overlap at $K$, and target-rank lift. These extra metrics make manipulation effects easier to interpret than quality metrics alone.
+To better measure and get a greater understanding of the attacks impact, we will also report ASR@K when targeted promotion is active, candidate overlap at $K$, and target-rank lift. These extra metrics make manipulation effects easier to interpret than quality metrics alone.
 
 \subsection{Attack Design and Experimental Methodology}
 
@@ -18,13 +18,13 @@ The experiment loop order is:
 
 \begin{enumerate}
   \item Prepare the baseline processed data,
-  \item generate poisoned bulk from baseline bulk,
-  \item index baseline and attacked bulks separately,
-  \item run recommendation requests,
-  \item compute metrics and export the final artifacts.
+  \item Generate poisoned bulk from baseline bulk,
+  \item Index baseline and attacked bulks separately,
+  \item Run recommendation requests,
+  \item Compute metrics and export the final artifacts.
 \end{enumerate}
 
-Control settings stay the same while the parameters of the attack change. this makes it much easier to compare normal retrieval with attacked retrieval and observe the effect of this attack.
+Control settings stay the same while the parameters of the attack change. This makes it much easier to compare normal retrieval with attacked retrieval and observe the effect of this attack.
 
 \begin{figure}[htbp]
   \centering
