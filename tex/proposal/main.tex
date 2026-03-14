@@ -3,8 +3,10 @@
 \usepackage{setspace}
 \usepackage{graphicx}
 \usepackage{float}
+\usepackage[section]{placeins}
 \usepackage{booktabs}
 \usepackage{array}
+\usepackage{chngcntr}
 \usepackage{hyperref}
 \usepackage{fancyhdr}
 \usepackage{iftex}
@@ -43,6 +45,9 @@
   pdftitle={Red-Teaming Large Language Model-Powered Recommendation Systems},
   pdfauthor={Sbaaoui Idriss}
 }
+
+\counterwithin{figure}{section}
+\renewcommand{\thefigure}{\thesection-\arabic{figure}}
 
 \title{Red-Teaming Large Language Model-Powered Recommendation Systems}
 \author{Sbaaoui Idriss\\Student ID: 22060004\\Department / Major: Computer Science\\University: 华东理工大学\\Supervisor: 张恒润}
