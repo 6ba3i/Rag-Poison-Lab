@@ -49,8 +49,8 @@
 \counterwithin{figure}{section}
 \renewcommand{\thefigure}{\thesection-\arabic{figure}}
 
-\title{Red-Teaming Large Language Model-Powered Recommendation Systems}
-\author{Sbaaoui Idriss\\Student ID: 22060004\\Department / Major: Computer Science\\University: 华东理工大学\\Supervisor: 张恒润}
+\title{\textbf{Red-Teaming Large Language Model-Powered Recommendation Systems}}
+\author{计(英)220 Sbaaoui Idriss（22060004）}
 \date{}
 
 \begin{document}
@@ -58,9 +58,7 @@
 \maketitle
 \thispagestyle{empty}
 
-\begin{abstract}
-\input{sections/abstract}
-\end{abstract}
+\noindent\textbf{abstract: }\input{sections/abstract}
 \section{Research Background}
 \input{sections/01_research_background}
 
@@ -68,6 +66,12 @@
 \input{sections/02_related_work}
 
 \section{Technical Route}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=1.0\textwidth]{figures/experiment_pipeline.png}
+  \caption{Planned experiment pipeline figure for reproducible baseline-vs-attacked evaluation.}
+  \label{fig:experiment-pipeline}
+\end{figure}
 \input{sections/03_technical_route}
 
 \section{Experimental Environment}
