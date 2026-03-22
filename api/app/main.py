@@ -6,9 +6,11 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from api.app.common.log import configure_logging
 from api.app.routers import health, recs, settings_llm, trace, users
 from api.app.settings import Settings, get_settings
 
+configure_logging()
 app = FastAPI(title="RAGPoison API")
 
 app.include_router(health.router, prefix="/api")

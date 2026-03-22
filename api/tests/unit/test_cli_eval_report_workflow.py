@@ -166,6 +166,9 @@ def test_eval_runner_single_batch_full_and_report_generation(tmp_path: Path) -> 
     assert (runs_root / "single_case" / "metrics.json").exists()
     assert single["target_movie_id"] == 1
     assert single["target_movie_source"] == "auto_selected"
+    assert isinstance(single["target_retrieval"], dict)
+    assert single["target_retrieval"]["applicable"] is True
+    assert isinstance(single["attack_config_diagnostics"], dict)
     assert isinstance(single.get("warnings"), list)
     assert str(single.get("attack_trace_path", "")).endswith("attack_trace.json")
 
@@ -173,6 +176,8 @@ def test_eval_runner_single_batch_full_and_report_generation(tmp_path: Path) -> 
     assert single_metrics["metadata"]["target_movie_id"] == 1
     assert single_metrics["metadata"]["target_movie_source"] == "auto_selected"
     assert single_metrics["metadata"]["attack_type"] == "targeted_promotion"
+    assert isinstance(single_metrics["metadata"]["attack_config_diagnostics"], dict)
+    assert isinstance(single_metrics["target_retrieval"], dict)
     assert any("auto-selected deterministic target_movie_id=1" in item for item in single_metrics.get("warnings", []))
     assert single_metrics["metadata"]["asr_applicable"] is True
     assert (runs_root / "single_case" / "attack_trace.json").exists()
@@ -208,6 +213,7 @@ def test_eval_runner_single_batch_full_and_report_generation(tmp_path: Path) -> 
     assert full["requested_users"] == 3
     assert full["evaluated_users"] == 2
     assert full["skipped_users"] == 1
+    assert isinstance(full["target_retrieval"], dict)
 
     reports = generate_reports(label="full_case", settings=settings, results_root=runs_root)
     assert Path(reports["summary_path"]).exists()
@@ -245,6 +251,7 @@ def test_eval_runner_marks_asr_not_applicable_for_untargeted_attack(tmp_path: Pa
         results_root=tmp_path / "runs",
     )
     assert result["asr_applicable"] is False
+    assert isinstance(result["target_retrieval"], dict)
     assert "asr" not in result["baseline"]
     assert "asr" not in result["attacked"]
     assert "asr" not in result["delta"]
@@ -254,6 +261,39 @@ def test_eval_runner_marks_asr_not_applicable_for_untargeted_attack(tmp_path: Pa
     assert "asr" not in metrics_payload["baseline"]
     assert "asr" not in metrics_payload["attacked"]
     assert "asr" not in metrics_payload["delta"]
+
+
+def test_eval_runner_single_auto_selects_viable_pair_when_user_id_missing(monkeypatch, tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    runs_root = tmp_path / "runs"
+
+    monkeypatch.setattr(
+        eval_runner,
+        "_auto_select_viable_single_case",
+        lambda **_: {
+            "user_id": 1,
+            "target_movie_id": 5,
+            "viable": True,
+            "reasons": [],
+            "baseline_hits_preview": 1,
+            "attacked_retrieval_rank": 3,
+        },
+    )
+
+    single = run_experiments(
+        mode="single",
+        label="single_auto_viable_case",
+        user_id=None,
+        batch_size=1,
+        k=10,
+        settings=settings,
+        es_client=FakeElasticsearch(),
+        results_root=runs_root,
+    )
+    assert single["requested_users"] == 1
+    assert single["target_movie_id"] == 5
+    assert single["target_movie_source"] == "auto_viable_pair"
+    assert any("Auto-selected viable single-user targeted case" in item for item in single.get("warnings", []))
 
 
 def test_cli_registration_and_index_dispatch(monkeypatch) -> None:

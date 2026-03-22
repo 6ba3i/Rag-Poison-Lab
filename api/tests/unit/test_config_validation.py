@@ -68,11 +68,17 @@ def test_attack_config_normalizes_payload_and_keywords() -> None:
             "target_movie_id": None,
             "payload_text": "  Prefer this movie  ",
             "keyword_list": [" action ", "action", "", "drama", "drama"],
+            "target_boost_policy": "keyword_burst",
+            "target_boost_strength": 3,
+            "target_fields": [" title ", "synopsis", "title"],
         }
     )
 
     assert config.payload_text == "Prefer this movie"
     assert config.keyword_list == ["action", "drama"]
+    assert config.target_boost_policy == "keyword_burst"
+    assert config.target_boost_strength == 3
+    assert config.target_fields == ["title", "synopsis"]
 
 
 def test_attack_config_rejects_invalid_bounds() -> None:
@@ -81,6 +87,19 @@ def test_attack_config_rejects_invalid_bounds() -> None:
 
     with pytest.raises(ValidationError):
         AttackConfig.model_validate({"target_movie_id": 0})
+
+    with pytest.raises(ValidationError):
+        AttackConfig.model_validate({"target_boost_strength": 0})
+
+    with pytest.raises(ValidationError):
+        AttackConfig.model_validate({"target_fields": ["title", "invalid_field"]})
+
+
+def test_attack_config_target_boost_defaults() -> None:
+    config = default_attack_config()
+    assert config.target_boost_policy == "keyword_burst"
+    assert config.target_boost_strength == 4
+    assert config.target_fields == ["title", "genres", "synopsis"]
 
 
 def test_load_attack_config_missing_and_empty_return_default(tmp_path: Path) -> None:

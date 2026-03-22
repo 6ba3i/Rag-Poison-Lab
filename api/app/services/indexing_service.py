@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 import os
 import socket
 import ssl
@@ -28,6 +29,8 @@ MOVIES_POISONED_MAPPING_PATH = REPO_ROOT / "docker" / "es" / "movies_poisoned_in
 
 CONNECT_REFUSED_ERRNOS = {111, 61, 10061}
 DNS_ERRNOS = {-2, 8, 11001}
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -212,6 +215,7 @@ def _connection_hint(url: str, exc: Exception | None = None, *, status_code: int
 
 def preflight_es(*, es_url: str | None = None, settings: Settings | None = None) -> dict[str, Any]:
     base_url = _resolve_es_url(es_url)
+    logger.info("es_preflight_start phase=indexing es_url=%s", base_url)
     status, body = _request(method="GET", url=f"{base_url}/", settings=settings)
     if status < 200 or status >= 300:
         raise RuntimeError(
@@ -290,7 +294,7 @@ def _load_mapping(mapping_path: Path) -> dict[str, Any]:
     return mapping
 
 
-def _load_bulk_payload(bulk_path: Path, *, index_name: str) -> tuple[bytes, int]:
+def _load_bulk_payload(bulk_path: Path, *, index_name: str) -> tuple[bytes, int, int]:
     if not bulk_path.exists():
         raise FileNotFoundError(f"Bulk JSONL file not found: {bulk_path}")
     if bulk_path.stat().st_size == 0:
@@ -302,6 +306,7 @@ def _load_bulk_payload(bulk_path: Path, *, index_name: str) -> tuple[bytes, int]
     if len(lines) % 2 != 0:
         raise ValueError(f"Bulk JSONL must contain action/document line pairs: {bulk_path}")
 
+    poison_docs = 0
     for line_idx in range(0, len(lines), 2):
         try:
             action = json.loads(lines[line_idx])
@@ -324,15 +329,24 @@ def _load_bulk_payload(bulk_path: Path, *, index_name: str) -> tuple[bytes, int]
             raise ValueError(f"Bulk document line must be a JSON object at line {line_idx + 2}")
         if str(document.get("movie_id", "")) != action_id:
             raise ValueError(f"movie_id must match action _id at lines {line_idx + 1}-{line_idx + 2}")
+        if bool(document.get("poison_marker", False)):
+            poison_docs += 1
 
     payload = ("\n".join(lines) + "\n").encode("utf-8")
     expected_docs = len(lines) // 2
-    return payload, expected_docs
+    return payload, expected_docs, poison_docs
 
 
 def _ensure_index(index_name: str, *, mapping_path: Path, es_url: str) -> None:
+    logger.info(
+        "index_ensure_start phase=indexing index_name=%s es_url=%s mapping_path=%s",
+        index_name,
+        es_url,
+        mapping_path,
+    )
     status, _ = _request(method="HEAD", url=f"{es_url}/{index_name}")
     if status == 200:
+        logger.info("index_ensure_exists phase=indexing index_name=%s", index_name)
         return
     if status != 404:
         raise RuntimeError(f"Failed to check index '{index_name}' (HTTP {status})")
@@ -349,10 +363,19 @@ def _ensure_index(index_name: str, *, mapping_path: Path, es_url: str) -> None:
             f"Failed to create index '{index_name}' (HTTP {create_status}): "
             f"{create_body.decode('utf-8', errors='replace')}"
         )
+    logger.info("index_created phase=indexing index_name=%s", index_name)
 
 
 def _bulk_index(index_name: str, *, bulk_path: Path, es_url: str) -> dict[str, Any]:
-    payload, expected_docs = _load_bulk_payload(bulk_path, index_name=index_name)
+    payload, expected_docs, poison_docs = _load_bulk_payload(bulk_path, index_name=index_name)
+    logger.info(
+        "bulk_index_start phase=indexing index_name=%s es_url=%s bulk_path=%s expected_docs=%s poison_docs=%s",
+        index_name,
+        es_url,
+        bulk_path,
+        expected_docs,
+        poison_docs,
+    )
     # Use the global bulk API; each action line already carries its own `_index`.
     bulk_status, bulk_body = _request(
         method="POST",
@@ -384,12 +407,20 @@ def _bulk_index(index_name: str, *, bulk_path: Path, es_url: str) -> dict[str, A
         raise RuntimeError(
             f"Document count mismatch for '{index_name}': expected {expected_docs}, got {indexed_docs}"
         )
+    logger.info(
+        "bulk_index_complete phase=indexing index_name=%s expected_docs=%s indexed_docs=%s poison_docs=%s",
+        index_name,
+        expected_docs,
+        indexed_docs,
+        poison_docs,
+    )
 
     return {
         "index": index_name,
         "bulk_file": str(bulk_path),
         "expected_docs": expected_docs,
         "indexed_docs": indexed_docs,
+        "poison_docs": poison_docs,
     }
 
 
@@ -405,6 +436,13 @@ def index_baseline_direct(
 ) -> dict[str, Any]:
     base = _resolve_es_url(es_url)
     bulk_path = _processed_dir(processed_dir) / ES_BULK_MOVIES_JSONL
+    logger.info(
+        "index_baseline_direct phase=indexing index_name=%s es_url=%s bulk_path=%s mapping_path=%s",
+        INDEX_MOVIES,
+        base,
+        bulk_path,
+        mapping_path,
+    )
     _ensure_index(INDEX_MOVIES, mapping_path=mapping_path, es_url=base)
     return _bulk_index(INDEX_MOVIES, bulk_path=bulk_path, es_url=base)
 
@@ -417,6 +455,13 @@ def index_poisoned_direct(
 ) -> dict[str, Any]:
     base = _resolve_es_url(es_url)
     bulk_path = _processed_dir(processed_dir) / ES_BULK_POISONED_MOVIES_JSONL
+    logger.info(
+        "index_poisoned_direct phase=indexing index_name=%s es_url=%s bulk_path=%s mapping_path=%s",
+        INDEX_MOVIES_POISONED,
+        base,
+        bulk_path,
+        mapping_path,
+    )
     _ensure_index(INDEX_MOVIES_POISONED, mapping_path=mapping_path, es_url=base)
     return _bulk_index(INDEX_MOVIES_POISONED, bulk_path=bulk_path, es_url=base)
 

@@ -8,6 +8,7 @@ from api.app.cli.commands_eval import eval_app
 from api.app.cli.commands_index import index_app
 from api.app.cli.commands_report import report_app
 from api.app.cli.wizard import run_wizard
+from api.app.common.log import configure_logging
 
 
 app = typer.Typer(help="RAGPoison CLI")
@@ -26,6 +27,7 @@ def wizard_command() -> None:
 
 
 def main() -> None:
+    configure_logging()
     app()
 
 

@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 import typer
 
+from api.app.eval.audit import generate_audit_artifacts
 from api.app.eval.runner import EvalMode, run_experiments
 
 
@@ -39,6 +40,21 @@ def evaluate_run(
     )
 
 
+def audit_run(
+    *,
+    label: str | None,
+    run_dir: Path | None,
+    user_id: int | None,
+    results_root: Path | None,
+) -> dict[str, Any]:
+    return generate_audit_artifacts(
+        label=label,
+        run_dir=run_dir.resolve() if run_dir is not None else None,
+        user_id=user_id,
+        results_root=results_root.resolve() if results_root is not None else None,
+    )
+
+
 @eval_app.command("run")
 def eval_run(
     mode: Literal["single", "batch", "full"] = typer.Option("single", help="Evaluation mode"),
@@ -61,6 +77,29 @@ def eval_run(
         )
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Evaluation failed: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    _print_summary(summary)
+
+
+@eval_app.command("audit")
+def eval_audit(
+    label: str | None = typer.Option(None, help="Run label to audit (default: latest run)"),
+    run_dir: Path | None = typer.Option(None, help="Explicit run directory path to audit"),
+    user_id: int | None = typer.Option(None, help="User ID to audit retrieval/ranking flow"),
+    results_root: Path | None = typer.Option(None, help="Override data/results/runs base path"),
+) -> None:
+    """Generate proof-led audit artifacts for poisoning, retrieval, and metrics behavior."""
+
+    try:
+        summary = audit_run(
+            label=label,
+            run_dir=run_dir,
+            user_id=user_id,
+            results_root=results_root,
+        )
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Audit generation failed: {exc}")
         raise typer.Exit(code=1) from exc
 
     _print_summary(summary)

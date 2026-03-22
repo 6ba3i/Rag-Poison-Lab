@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 import random
 from typing import Any, Literal
@@ -9,17 +10,27 @@ from urllib.parse import urlparse
 
 from api.app.eval.metrics import asr_at_k, hr_at_k, mean_metrics, metrics_delta, mrr_at_k, ndcg_at_k
 from api.app.llm.registry import LlmRegistry
-from api.app.services.recs_service import RecsService, load_llm_config
+from api.app.services.recs_service import RecsService, load_llm_config, recommendation_retrieval_size
 from api.app.services.users_service import UsersService
 from api.app.settings import Settings, get_es_client, get_settings
 from common.schemas.attack_config import AttackConfig, load_attack_config
 from common.schemas.llm_config import LlmConfig
+from rag.recsys.candidate_gen import (
+    build_es_query,
+    build_retrieval_query,
+    build_user_context,
+    parse_hits,
+)
+from rag.recsys.ranker import rank_candidates
 
 EvalMode = Literal["single", "batch", "full"]
 BASE_METRIC_KEYS: tuple[str, ...] = ("hr", "ndcg", "mrr")
 ASR_METRIC_KEY = "asr"
 AUTO_TARGET_POOL_SIZE = 20
 AUTO_TARGET_PICK_SEED = 42
+AUTO_VIABLE_USER_SCAN_LIMIT = 200
+
+logger = logging.getLogger(__name__)
 
 
 def run_experiments(
@@ -38,19 +49,21 @@ def run_experiments(
     if batch_size <= 0:
         raise ValueError("batch_size must be >= 1")
 
+    logger.info(
+        "eval_run_start mode=%s label=%s k=%s user_id=%s batch_size=%s",
+        mode,
+        label,
+        k,
+        user_id,
+        batch_size,
+    )
+
     resolved_settings = settings or get_settings()
     resolved_es_client = es_client if es_client is not None else get_es_client()
     llm_registry = LlmRegistry(settings=resolved_settings)
 
     users_service = UsersService(settings=resolved_settings)
     recs_service = RecsService(settings=resolved_settings, es_client=resolved_es_client, llm_registry=llm_registry)
-
-    selected_user_ids = _resolve_user_ids(
-        users_service=users_service,
-        mode=mode,
-        user_id=user_id,
-        batch_size=batch_size,
-    )
 
     relevant_by_user = _build_relevant_movies_map(users_service)
     llm_config = load_llm_config(settings=resolved_settings)
@@ -65,9 +78,66 @@ def run_experiments(
         attack_config=attack_config,
         users_service=users_service,
     )
-    eval_warnings.extend(_validate_poisoned_index_state(es_client=resolved_es_client, attack_config=attack_config))
-    asr_applicable = bool(attack_config.attack_type == "targeted_promotion" and target_movie_id is not None)
+    selected_user_ids = _resolve_user_ids(
+        users_service=users_service,
+        mode=mode,
+        user_id=user_id,
+        batch_size=batch_size,
+    )
+    if mode == "single":
+        resolved_user_id, target_movie_id, target_movie_source, single_case_warnings = _resolve_single_eval_case(
+            users_service=users_service,
+            recs_service=recs_service,
+            es_client=resolved_es_client,
+            relevant_by_user=relevant_by_user,
+            llm_config=llm_config,
+            attack_config=attack_config,
+            requested_user_id=user_id,
+            target_movie_id=target_movie_id,
+            target_movie_source=target_movie_source,
+            k=k,
+        )
+        selected_user_ids = [resolved_user_id]
+        eval_warnings.extend(single_case_warnings)
+
+    attack_config_diagnostics, config_warnings = _build_attack_config_diagnostics(
+        attack_config=attack_config,
+        users_service=users_service,
+        selected_user_ids=selected_user_ids,
+        target_movie_id=target_movie_id,
+    )
+    eval_warnings.extend(config_warnings)
+    eval_warnings.extend(
+        _validate_poisoned_index_state(
+            es_client=resolved_es_client,
+            attack_config=attack_config,
+            target_movie_id=target_movie_id,
+        )
+    )
+    asr_applicable = _is_asr_applicable(
+        attack_type=attack_config.attack_type,
+        target_movie_id=target_movie_id,
+    )
+    asr_applicable_reason = _asr_applicability_reason(
+        attack_type=attack_config.attack_type,
+        target_movie_id=target_movie_id,
+    )
     metric_keys: tuple[str, ...] = BASE_METRIC_KEYS + ((ASR_METRIC_KEY,) if asr_applicable else tuple())
+    if not asr_applicable and target_movie_id is not None:
+        eval_warnings.append(
+            f"target_movie_id={target_movie_id} configured but ASR disabled for attack_type={attack_config.attack_type}"
+        )
+
+    logger.info(
+        "eval_context_resolved mode=%s selected_users=%s attack_type=%s target_movie_id=%s target_source=%s asr_applicable=%s attack_config_diagnostics=%s",
+        mode,
+        len(selected_user_ids),
+        attack_config.attack_type,
+        target_movie_id,
+        target_movie_source,
+        asr_applicable,
+        json.dumps(attack_config_diagnostics, sort_keys=True),
+    )
 
     per_user_rows: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -81,46 +151,35 @@ def run_experiments(
             continue
 
         try:
-            if mode == "single":
-                baseline_result = recs_service.recommend_with_debug(
-                    user_id=current_user_id,
-                    mode="baseline",
-                    k=k,
-                    seen_history_split="train",
-                    strict_retrieval=True,
-                )
-                attacked_result = recs_service.recommend_with_debug(
-                    user_id=current_user_id,
-                    mode="attacked",
-                    k=k,
-                    seen_history_split="train",
-                    strict_retrieval=True,
-                )
-                baseline = baseline_result["items"]
-                attacked = attacked_result["items"]
-            else:
-                baseline = recs_service.recommend(
-                    user_id=current_user_id,
-                    mode="baseline",
-                    k=k,
-                    seen_history_split="train",
-                    strict_retrieval=True,
-                )
-                attacked = recs_service.recommend(
-                    user_id=current_user_id,
-                    mode="attacked",
-                    k=k,
-                    seen_history_split="train",
-                    strict_retrieval=True,
-                )
-                baseline_result = {"debug": None}
-                attacked_result = {"debug": None}
+            baseline_result = recs_service.recommend_with_debug(
+                user_id=current_user_id,
+                mode="baseline",
+                k=k,
+                seen_history_split="train",
+                strict_retrieval=True,
+            )
+            attacked_result = recs_service.recommend_with_debug(
+                user_id=current_user_id,
+                mode="attacked",
+                k=k,
+                seen_history_split="train",
+                strict_retrieval=True,
+            )
+            baseline = baseline_result["items"]
+            attacked = attacked_result["items"]
         except Exception as exc:  # noqa: BLE001
             skipped.append({"user_id": current_user_id, "reason": f"recommendation_error: {exc}"})
             continue
 
         baseline_ids = _extract_movie_ids(baseline)
         attacked_ids = _extract_movie_ids(attacked)
+        baseline_debug = baseline_result.get("debug")
+        attacked_debug = attacked_result.get("debug")
+        baseline_retrieval_ids = _extract_debug_movie_ids(baseline_debug, key="retrieved_from_es_movie_ids")
+        attacked_retrieval_ids = _extract_debug_movie_ids(attacked_debug, key="retrieved_from_es_movie_ids")
+
+        baseline_hits = _relevant_hits_at_k(recommended=baseline_ids, relevant=relevant, k=k)
+        attacked_hits = _relevant_hits_at_k(recommended=attacked_ids, relevant=relevant, k=k)
 
         baseline_metrics = {
             "hr": hr_at_k(baseline_ids, relevant, k),
@@ -143,20 +202,65 @@ def run_experiments(
             baseline_rank=target_rank_baseline,
             attacked_rank=target_rank_attacked,
         )
+        target_retrieval_rank_baseline = _rank_of_target(
+            recommended=baseline_retrieval_ids,
+            target_movie_id=target_movie_id,
+            k=len(baseline_retrieval_ids),
+        )
+        target_retrieval_rank_attacked = _rank_of_target(
+            recommended=attacked_retrieval_ids,
+            target_movie_id=target_movie_id,
+            k=len(attacked_retrieval_ids),
+        )
+        target_retrieval_rank_lift = _target_rank_lift(
+            baseline_rank=target_retrieval_rank_baseline,
+            attacked_rank=target_retrieval_rank_attacked,
+        )
 
         per_user_rows.append(
             {
                 "user_id": current_user_id,
                 "relevant_test_count": len(relevant),
+                "baseline_relevant_hits_at_k": baseline_hits,
+                "attacked_relevant_hits_at_k": attacked_hits,
                 "candidate_overlap_at_k": round(overlap, 6),
                 "target_rank_baseline": target_rank_baseline,
                 "target_rank_attacked": target_rank_attacked,
                 "target_rank_lift": target_rank_lift,
+                "target_in_retrieval_baseline": bool(target_retrieval_rank_baseline is not None),
+                "target_in_retrieval_attacked": bool(target_retrieval_rank_attacked is not None),
+                "target_retrieval_rank_baseline": target_retrieval_rank_baseline,
+                "target_retrieval_rank_attacked": target_retrieval_rank_attacked,
+                "target_retrieval_rank_lift": target_retrieval_rank_lift,
                 "baseline": _round_metrics(baseline_metrics),
                 "attacked": _round_metrics(attacked_metrics),
                 "delta": _round_metrics(metrics_delta(baseline=baseline_metrics, attacked=attacked_metrics)),
             }
         )
+
+        logger.info(
+            "eval_user_result user_id=%s mode=%s attack_type=%s relevant_test_count=%s baseline_hits_at_k=%s attacked_hits_at_k=%s overlap_at_k=%.6f target_rank_baseline=%s target_rank_attacked=%s target_retrieval_rank_baseline=%s target_retrieval_rank_attacked=%s",
+            current_user_id,
+            mode,
+            attack_config.attack_type,
+            len(relevant),
+            baseline_hits,
+            attacked_hits,
+            overlap,
+            target_rank_baseline,
+            target_rank_attacked,
+            target_retrieval_rank_baseline,
+            target_retrieval_rank_attacked,
+        )
+
+        if baseline_hits == 0 and attacked_hits == 0:
+            logger.warning(
+                "eval_user_zero_hit_floor user_id=%s k=%s attack_type=%s target_movie_id=%s",
+                current_user_id,
+                k,
+                attack_config.attack_type,
+                target_movie_id,
+            )
 
         if mode == "single":
             attack_trace_payload = {
@@ -164,24 +268,32 @@ def run_experiments(
                 "user_id": int(current_user_id),
                 "k": int(k),
                 "attack_config": attack_config.model_dump(),
+                "attack_config_diagnostics": attack_config_diagnostics,
                 "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
                 "target_movie_source": target_movie_source,
                 "asr_applicable": asr_applicable,
                 "baseline_index": "movies",
                 "attacked_index": "movies_poisoned",
                 "relevant_test_movie_ids": sorted(int(item) for item in relevant),
-                "baseline_debug": baseline_result.get("debug"),
-                "attacked_debug": attacked_result.get("debug"),
+                "baseline_debug": baseline_debug,
+                "attacked_debug": attacked_debug,
                 "metrics_input": {
                     "baseline_ids": baseline_ids,
                     "attacked_ids": attacked_ids,
+                    "baseline_retrieval_ids": baseline_retrieval_ids,
+                    "attacked_retrieval_ids": attacked_retrieval_ids,
                     "baseline_metrics": _round_metrics(baseline_metrics),
                     "attacked_metrics": _round_metrics(attacked_metrics),
                     "delta_metrics": _round_metrics(metrics_delta(baseline=baseline_metrics, attacked=attacked_metrics)),
                     "candidate_overlap_at_k": round(overlap, 6),
+                    "baseline_relevant_hits_at_k": baseline_hits,
+                    "attacked_relevant_hits_at_k": attacked_hits,
                     "target_rank_baseline": target_rank_baseline,
                     "target_rank_attacked": target_rank_attacked,
                     "target_rank_lift": target_rank_lift,
+                    "target_retrieval_rank_baseline": target_retrieval_rank_baseline,
+                    "target_retrieval_rank_attacked": target_retrieval_rank_attacked,
+                    "target_retrieval_rank_lift": target_retrieval_rank_lift,
                 },
             }
 
@@ -199,6 +311,7 @@ def run_experiments(
         mean_metrics([row["attacked"] for row in per_user_rows], metric_keys)
     )
     delta_aggregate = _round_metrics(metrics_delta(baseline=baseline_aggregate, attacked=attacked_aggregate))
+    target_retrieval_aggregate = _aggregate_target_retrieval(per_user_rows=per_user_rows, target_movie_id=target_movie_id)
 
     run_label = _normalize_label(label) if label is not None else _default_run_label()
     run_dir = resolve_run_dir(settings=resolved_settings, label=run_label, results_root=results_root)
@@ -220,17 +333,15 @@ def run_experiments(
             "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
             "target_movie_source": target_movie_source,
             "asr_applicable": asr_applicable,
-            "asr_applicable_reason": (
-                "targeted_promotion_with_target"
-                if asr_applicable
-                else f"attack_type={attack_config.attack_type} does not use ASR as primary success metric"
-            ),
+            "asr_applicable_reason": asr_applicable_reason,
+            "attack_config_diagnostics": attack_config_diagnostics,
             "metric_keys": list(metric_keys),
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         },
         "baseline": baseline_aggregate,
         "attacked": attacked_aggregate,
         "delta": delta_aggregate,
+        "target_retrieval": target_retrieval_aggregate,
         "per_user": per_user_rows,
         "skipped": skipped,
     }
@@ -253,15 +364,29 @@ def run_experiments(
         "baseline": baseline_aggregate,
         "attacked": attacked_aggregate,
         "delta": delta_aggregate,
+        "target_retrieval": target_retrieval_aggregate,
         "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
         "target_movie_source": target_movie_source,
         "asr_applicable": asr_applicable,
+        "attack_config_diagnostics": attack_config_diagnostics,
         "metric_keys": list(metric_keys),
     }
     if eval_warnings:
         summary["warnings"] = list(eval_warnings)
     if attack_trace_path is not None:
         summary["attack_trace_path"] = str(attack_trace_path)
+    logger.info(
+        "eval_run_complete label=%s mode=%s attack_type=%s evaluated_users=%s baseline=%s attacked=%s delta=%s target_retrieval=%s metrics_path=%s",
+        run_label,
+        mode,
+        attack_config.attack_type,
+        len(per_user_rows),
+        baseline_aggregate,
+        attacked_aggregate,
+        delta_aggregate,
+        target_retrieval_aggregate,
+        metrics_path,
+    )
     return summary
 
 
@@ -282,7 +407,7 @@ def _resolve_user_ids(
 
     if mode == "single":
         if user_id is None:
-            raise ValueError("user_id is required when mode=single")
+            return []
         if int(user_id) not in set(ordered_ids):
             raise ValueError(f"Unknown user_id: {user_id}")
         return [int(user_id)]
@@ -319,6 +444,25 @@ def _extract_movie_ids(items: list[dict[str, Any]]) -> list[int]:
     return output
 
 
+def _extract_debug_movie_ids(debug_payload: object, *, key: str) -> list[int]:
+    if not isinstance(debug_payload, dict):
+        return []
+    raw = debug_payload.get(key, [])
+    if not isinstance(raw, list):
+        return []
+    output: list[int] = []
+    for item in raw:
+        try:
+            output.append(int(item))
+        except Exception:  # noqa: BLE001
+            continue
+    return output
+
+
+def _is_targeted_attack_type(attack_type: str) -> bool:
+    return attack_type in {"targeted_promotion", "prompt_injection"}
+
+
 def _resolve_target_movie_id(
     *,
     attack_config: AttackConfig,
@@ -328,16 +472,352 @@ def _resolve_target_movie_id(
     if configured_target is not None:
         return int(configured_target), [], "configured"
 
-    if attack_config.attack_type != "targeted_promotion":
+    if attack_config.attack_type not in {"targeted_promotion", "prompt_injection"}:
         return None, [], "none"
 
     selected = _auto_pick_target_movie_id(users_service=users_service)
     warnings = [
-        "target_movie_id is not set for attack_type=targeted_promotion; "
+        f"target_movie_id is not set for attack_type={attack_config.attack_type}; "
         f"auto-selected deterministic target_movie_id={selected} (seed={AUTO_TARGET_PICK_SEED}). "
         "Set data/config/attack_config.json:target_movie_id to avoid automatic selection."
     ]
     return selected, warnings, "auto_selected"
+
+
+def _resolve_single_eval_case(
+    *,
+    users_service: UsersService,
+    recs_service: RecsService,
+    es_client: Any,
+    relevant_by_user: dict[int, set[int]],
+    llm_config: LlmConfig,
+    attack_config: AttackConfig,
+    requested_user_id: int | None,
+    target_movie_id: int | None,
+    target_movie_source: str,
+    k: int,
+) -> tuple[int, int | None, str, list[str]]:
+    ordered_user_ids = sorted(int(item["user_id"]) for item in users_service.list_users(limit=1_000_000))
+    if not ordered_user_ids:
+        raise RuntimeError("No users found in processed dataset; run data prepare first.")
+
+    if requested_user_id is not None:
+        selected_user_id = int(requested_user_id)
+        if selected_user_id not in set(ordered_user_ids):
+            raise ValueError(f"Unknown user_id: {selected_user_id}")
+        warnings = _manual_single_case_warnings(
+            users_service=users_service,
+            es_client=es_client,
+            relevant_by_user=relevant_by_user,
+            llm_config=llm_config,
+            user_id=selected_user_id,
+            target_movie_id=target_movie_id,
+            k=k,
+        )
+        return selected_user_id, target_movie_id, target_movie_source, warnings
+
+    if not _is_targeted_attack_type(attack_config.attack_type):
+        selected_user_id = int(ordered_user_ids[0])
+        return (
+            selected_user_id,
+            target_movie_id,
+            target_movie_source,
+            ["mode=single without user_id defaulted to first available user_id because attack is non-targeted."],
+        )
+
+    candidate = _auto_select_viable_single_case(
+        users_service=users_service,
+        es_client=es_client,
+        relevant_by_user=relevant_by_user,
+        llm_config=llm_config,
+        target_movie_id=target_movie_id,
+        k=k,
+    )
+    if candidate is None:
+        raise RuntimeError(
+            "Unable to auto-select a viable single-user targeted case. "
+            "No user satisfied: baseline_relevant_hits_at_k>0, target not in train history, and target retrievable "
+            "from attacked candidates. Provide --user-id manually or update attack_config target/movie setup."
+        )
+
+    resolved_source = "auto_viable_pair"
+    warnings = [
+        "Auto-selected viable single-user targeted case: "
+        f"user_id={candidate['user_id']} target_movie_id={candidate['target_movie_id']} "
+        f"(baseline_hits_preview={candidate['baseline_hits_preview']} "
+        f"attacked_retrieval_rank={candidate['attacked_retrieval_rank']})."
+    ]
+    return int(candidate["user_id"]), int(candidate["target_movie_id"]), resolved_source, warnings
+
+
+def _manual_single_case_warnings(
+    *,
+    users_service: UsersService,
+    es_client: Any,
+    relevant_by_user: dict[int, set[int]],
+    llm_config: LlmConfig,
+    user_id: int,
+    target_movie_id: int | None,
+    k: int,
+) -> list[str]:
+    if target_movie_id is None:
+        return []
+    try:
+        diagnosis = _single_case_diagnosis(
+            users_service=users_service,
+            es_client=es_client,
+            relevant_by_user=relevant_by_user,
+            llm_config=llm_config,
+            user_id=user_id,
+            target_movie_id=target_movie_id,
+            k=k,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return [
+            "Manual single-user viability precheck skipped due to retrieval preview failure: "
+            f"{type(exc).__name__}: {exc}"
+        ]
+    if diagnosis["viable"]:
+        return []
+    return [
+        "Manual single-user pair appears low-viability for target attack: "
+        f"user_id={user_id} target_movie_id={target_movie_id} reasons={diagnosis['reasons']}"
+    ]
+
+
+def _auto_select_viable_single_case(
+    *,
+    users_service: UsersService,
+    es_client: Any,
+    relevant_by_user: dict[int, set[int]],
+    llm_config: LlmConfig,
+    target_movie_id: int | None,
+    k: int,
+) -> dict[str, Any] | None:
+    ordered_user_ids = sorted(int(item["user_id"]) for item in users_service.list_users(limit=1_000_000))
+    viable_candidates: list[dict[str, Any]] = []
+
+    for current_user_id in ordered_user_ids[:AUTO_VIABLE_USER_SCAN_LIMIT]:
+        diagnosis = _single_case_diagnosis(
+            users_service=users_service,
+            es_client=es_client,
+            relevant_by_user=relevant_by_user,
+            llm_config=llm_config,
+            user_id=current_user_id,
+            target_movie_id=target_movie_id,
+            k=k,
+        )
+        if not diagnosis["viable"]:
+            continue
+        viable_candidates.append(diagnosis)
+
+    if not viable_candidates:
+        return None
+
+    viable_candidates.sort(
+        key=lambda item: (
+            int(item.get("attacked_retrieval_rank", 10_000)),
+            -int(item.get("baseline_hits_preview", 0)),
+            int(item.get("user_id", 10_000)),
+        )
+    )
+    return viable_candidates[0]
+
+
+def _single_case_diagnosis(
+    *,
+    users_service: UsersService,
+    es_client: Any,
+    relevant_by_user: dict[int, set[int]],
+    llm_config: LlmConfig,
+    user_id: int,
+    target_movie_id: int | None,
+    k: int,
+) -> dict[str, Any]:
+    relevant = relevant_by_user.get(user_id, set())
+    if not relevant:
+        return {
+            "user_id": int(user_id),
+            "target_movie_id": target_movie_id,
+            "viable": False,
+            "reasons": ["user_has_no_test_items"],
+            "baseline_hits_preview": 0,
+            "attacked_retrieval_rank": None,
+        }
+
+    profile = users_service.get_profile(user_id)
+    if profile is None:
+        return {
+            "user_id": int(user_id),
+            "target_movie_id": target_movie_id,
+            "viable": False,
+            "reasons": ["unknown_user_profile"],
+            "baseline_hits_preview": 0,
+            "attacked_retrieval_rank": None,
+        }
+
+    history_train = users_service.get_history(user_id, split="train")
+    seen_movie_ids = {int(item["movie_id"]) for item in history_train}
+    context = build_user_context(profile=profile, train_history=history_train)
+    query_text = build_retrieval_query(context)
+    query_body = build_es_query(query_text=query_text, seen_movie_ids=seen_movie_ids)
+    retrieval_size = recommendation_retrieval_size(ranking_mode=llm_config.ranking_mode, k=k)
+
+    baseline_candidates = _preview_retrieved_candidates(
+        es_client=es_client,
+        index_name="movies",
+        query_body=query_body,
+        size=retrieval_size,
+        seen_movie_ids=seen_movie_ids,
+    )
+    attacked_candidates = _preview_retrieved_candidates(
+        es_client=es_client,
+        index_name="movies_poisoned",
+        query_body=query_body,
+        size=retrieval_size,
+        seen_movie_ids=seen_movie_ids,
+    )
+
+    baseline_ranked = rank_candidates(candidates=baseline_candidates, user_top_genres=context.top_genres, k=k)
+    baseline_ids = [item.candidate.movie_id for item in baseline_ranked]
+    baseline_hits = _relevant_hits_at_k(recommended=baseline_ids, relevant=relevant, k=k)
+
+    baseline_retrieval_ids = [item.movie_id for item in baseline_candidates]
+    attacked_retrieval_ids = [item.movie_id for item in attacked_candidates]
+    effective_target = target_movie_id
+    if effective_target is None:
+        for movie_id in attacked_retrieval_ids:
+            if movie_id in seen_movie_ids:
+                continue
+            if movie_id in baseline_ids:
+                continue
+            effective_target = int(movie_id)
+            break
+
+    reasons: list[str] = []
+    if baseline_hits <= 0:
+        reasons.append("baseline_relevant_hits_preview_is_zero")
+    if effective_target is None:
+        reasons.append("no_candidate_target_found_in_attacked_retrieval")
+    if effective_target is not None and effective_target in seen_movie_ids:
+        reasons.append("target_in_user_train_history")
+
+    attacked_retrieval_rank = _rank_of_target(
+        recommended=attacked_retrieval_ids,
+        target_movie_id=effective_target,
+        k=len(attacked_retrieval_ids),
+    )
+    if effective_target is not None and attacked_retrieval_rank is None:
+        reasons.append("target_missing_from_attacked_retrieval")
+
+    viable = len(reasons) == 0
+    return {
+        "user_id": int(user_id),
+        "target_movie_id": int(effective_target) if effective_target is not None else None,
+        "viable": viable,
+        "reasons": reasons,
+        "baseline_hits_preview": int(baseline_hits),
+        "attacked_retrieval_rank": attacked_retrieval_rank,
+        "baseline_retrieval_size": len(baseline_retrieval_ids),
+        "attacked_retrieval_size": len(attacked_retrieval_ids),
+        "query_text": query_text,
+    }
+
+
+def _preview_retrieved_candidates(
+    *,
+    es_client: Any,
+    index_name: str,
+    query_body: dict[str, Any],
+    size: int,
+    seen_movie_ids: set[int],
+) -> list[Any]:
+    response = es_client.search(index=index_name, query=query_body, size=size)
+    hits_raw = _response_get(response, "hits", {})
+    hits = _response_get(hits_raw, "hits", [])
+    if not isinstance(hits, list):
+        return []
+    return parse_hits(hits=hits, seen_movie_ids=seen_movie_ids)
+
+
+def _build_attack_config_diagnostics(
+    *,
+    attack_config: AttackConfig,
+    users_service: UsersService,
+    selected_user_ids: list[int],
+    target_movie_id: int | None,
+) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    movie_ids: set[int] = set()
+    if "movie_id" in users_service.movies_df.columns:
+        for raw in users_service.movies_df["movie_id"].tolist():
+            try:
+                movie_ids.add(int(raw))
+            except Exception:  # noqa: BLE001
+                continue
+
+    total_movies = len(movie_ids)
+    expected_poison_docs = int(round(float(attack_config.poison_fraction) * float(total_movies)))
+    target_exists_in_movies = None if target_movie_id is None else bool(target_movie_id in movie_ids)
+    payload_text_nonempty = bool(attack_config.payload_text.strip())
+    keyword_count = len(attack_config.keyword_list)
+    retrieval_fields = {"title", "genres", "synopsis"}
+    target_field_overlap = [field for field in attack_config.target_fields if field in retrieval_fields]
+
+    selected_target_train_users: list[int] = []
+    if target_movie_id is not None and not users_service.splits_df.empty:
+        splits = users_service.splits_df.copy()
+        if {"user_id", "movie_id", "split"}.issubset(splits.columns):
+            splits["user_id"] = splits["user_id"].astype("int64")
+            splits["movie_id"] = splits["movie_id"].astype("int64")
+            splits["split"] = splits["split"].astype(str)
+            target_train = splits[(splits["split"] == "train") & (splits["movie_id"] == int(target_movie_id))]
+            selected_set = set(int(item) for item in selected_user_ids)
+            selected_target_train_users = sorted(int(item) for item in set(target_train["user_id"].tolist()) if int(item) in selected_set)
+
+    if expected_poison_docs <= 0:
+        warnings.append(
+            "attack_config_diagnostics: poison_fraction rounds to zero poisoned docs; increase poison_fraction or dataset size."
+        )
+    if _is_targeted_attack_type(attack_config.attack_type) and target_movie_id is not None and not target_exists_in_movies:
+        warnings.append(
+            f"attack_config_diagnostics: target_movie_id={target_movie_id} does not exist in processed movies dataset."
+        )
+    if _is_targeted_attack_type(attack_config.attack_type) and not payload_text_nonempty:
+        warnings.append(
+            "attack_config_diagnostics: payload_text is empty; poisoned payload context may not affect reranking prompts."
+        )
+    if _is_targeted_attack_type(attack_config.attack_type) and keyword_count == 0:
+        warnings.append(
+            "attack_config_diagnostics: keyword_list is empty; targeted retrieval boost is likely weak."
+        )
+    if selected_target_train_users:
+        warnings.append(
+            f"attack_config_diagnostics: target_movie_id={target_movie_id} exists in train history for selected users={selected_target_train_users}; "
+            "target exposure conditions may be unrealistic for attack evaluation."
+        )
+    if attack_config.target_boost_policy != "disabled" and not target_field_overlap:
+        warnings.append(
+            "attack_config_diagnostics: target_fields has no retrieval-relevant overlap with {title,genres,synopsis}."
+        )
+
+    diagnostics: dict[str, Any] = {
+        "attack_type": attack_config.attack_type,
+        "poison_fraction": float(attack_config.poison_fraction),
+        "total_movies": int(total_movies),
+        "expected_poisoned_docs": int(expected_poison_docs),
+        "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
+        "target_exists_in_movies": target_exists_in_movies,
+        "selected_user_ids": [int(item) for item in selected_user_ids],
+        "target_in_selected_users_train": selected_target_train_users,
+        "payload_text_nonempty": payload_text_nonempty,
+        "keyword_count": int(keyword_count),
+        "target_boost_policy": attack_config.target_boost_policy,
+        "target_boost_strength": int(attack_config.target_boost_strength),
+        "target_fields": list(attack_config.target_fields),
+        "target_fields_retrieval_overlap": target_field_overlap,
+    }
+    return diagnostics, warnings
 
 
 def _auto_pick_target_movie_id(*, users_service: UsersService) -> int:
@@ -376,9 +856,15 @@ def _summarize_skip_reasons(skipped: list[dict[str, Any]], *, max_reasons: int =
     return "; ".join(f"{reason} (x{count})" for reason, count in top)
 
 
-def _validate_poisoned_index_state(*, es_client: Any, attack_config: AttackConfig) -> list[str]:
+def _validate_poisoned_index_state(
+    *,
+    es_client: Any,
+    attack_config: AttackConfig,
+    target_movie_id: int | None,
+) -> list[str]:
+    warnings: list[str] = []
     if float(attack_config.poison_fraction) <= 0.0:
-        return []
+        return warnings
     if not hasattr(es_client, "count"):
         return [
             "Poisoned index validation skipped because es_client.count is unavailable; "
@@ -401,7 +887,80 @@ def _validate_poisoned_index_state(*, es_client: Any, attack_config: AttackConfi
             "Run: uv run --project api python -m api.app.cli.cli attack build-poisoned "
             "&& uv run --project api python -m api.app.cli.cli index poisoned"
         )
-    return [f"Validated poisoned index: poison_marker=true docs={poison_marked}"]
+
+    warnings.append(f"Validated poisoned index: poison_marker=true docs={poison_marked}")
+    target_validation = _validate_target_poison_state(
+        es_client=es_client,
+        attack_config=attack_config,
+        target_movie_id=target_movie_id,
+    )
+    if target_validation is not None:
+        warnings.append(target_validation)
+    return warnings
+
+
+def _validate_target_poison_state(
+    *,
+    es_client: Any,
+    attack_config: AttackConfig,
+    target_movie_id: int | None,
+) -> str | None:
+    if target_movie_id is None:
+        return None
+    if attack_config.attack_type not in {"targeted_promotion", "prompt_injection"}:
+        return None
+    if not hasattr(es_client, "search"):
+        return (
+            "Target poisoning validation skipped because es_client.search is unavailable; "
+            f"cannot confirm target_movie_id={target_movie_id} poison state."
+        )
+
+    try:
+        response = es_client.search(
+            index="movies_poisoned",
+            query={"term": {"movie_id": str(target_movie_id)}},
+            size=1,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return (
+            f"Target poisoning validation failed for target_movie_id={target_movie_id}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+    hits_raw = _response_get(response, "hits", {})
+    hits = _response_get(hits_raw, "hits", [])
+    if not isinstance(hits, list) or not hits:
+        return f"Target poisoning validation warning: target_movie_id={target_movie_id} not found in movies_poisoned."
+
+    first = hits[0]
+    source = _response_get(first, "_source", {})
+    if not isinstance(source, dict):
+        source = {}
+    poison_marker = bool(source.get("poison_marker", False))
+    poison_payload_present = bool(str(source.get("poison_payload", "") or "").strip())
+    synopsis_present = bool(str(source.get("synopsis", "") or "").strip())
+    if not poison_marker and not poison_payload_present:
+        return (
+            f"Target poisoning validation warning: target_movie_id={target_movie_id} present but appears unpoisoned "
+            "(poison_marker=false and empty poison_payload)."
+        )
+    return (
+        f"Validated target poison state: target_movie_id={target_movie_id} "
+        f"poison_marker={str(poison_marker).lower()} poison_payload_present={str(poison_payload_present).lower()} "
+        f"synopsis_present={str(synopsis_present).lower()}"
+    )
+
+
+def _response_get(value: object, key: str, default: Any) -> Any:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    getter = getattr(value, "get", None)
+    if callable(getter):
+        try:
+            return getter(key, default)
+        except Exception:  # noqa: BLE001
+            return default
+    return default
 
 
 def _top_k_ids(recommended: list[int], k: int) -> list[int]:
@@ -431,6 +990,13 @@ def _candidate_overlap_at_k(*, baseline_ids: list[int], attacked_ids: list[int],
     return len(left & right) / float(len(union))
 
 
+def _relevant_hits_at_k(*, recommended: list[int], relevant: set[int], k: int) -> int:
+    if k <= 0 or not relevant:
+        return 0
+    top_k = _top_k_ids(recommended, k)
+    return len([movie_id for movie_id in top_k if movie_id in relevant])
+
+
 def _rank_of_target(*, recommended: list[int], target_movie_id: int | None, k: int) -> int | None:
     if target_movie_id is None or k <= 0:
         return None
@@ -450,8 +1016,86 @@ def _target_rank_lift(*, baseline_rank: int | None, attacked_rank: int | None) -
     return int(baseline_rank - attacked_rank)
 
 
+def _aggregate_target_retrieval(*, per_user_rows: list[dict[str, Any]], target_movie_id: int | None) -> dict[str, Any]:
+    if target_movie_id is None:
+        return {
+            "applicable": False,
+            "target_movie_id": None,
+            "users": int(len(per_user_rows)),
+        }
+
+    total_users = len(per_user_rows)
+    baseline_present = 0
+    attacked_present = 0
+    rank_changed = 0
+    baseline_ranks: list[int] = []
+    attacked_ranks: list[int] = []
+    lifts: list[int] = []
+
+    for row in per_user_rows:
+        baseline_rank_raw = row.get("target_retrieval_rank_baseline")
+        attacked_rank_raw = row.get("target_retrieval_rank_attacked")
+        lift_raw = row.get("target_retrieval_rank_lift")
+
+        baseline_rank = int(baseline_rank_raw) if isinstance(baseline_rank_raw, int) else None
+        attacked_rank = int(attacked_rank_raw) if isinstance(attacked_rank_raw, int) else None
+        lift = int(lift_raw) if isinstance(lift_raw, int) else None
+
+        if baseline_rank is not None:
+            baseline_present += 1
+            baseline_ranks.append(baseline_rank)
+        if attacked_rank is not None:
+            attacked_present += 1
+            attacked_ranks.append(attacked_rank)
+        if baseline_rank != attacked_rank:
+            rank_changed += 1
+        if lift is not None:
+            lifts.append(lift)
+
+    baseline_presence_rate = (baseline_present / float(total_users)) if total_users > 0 else 0.0
+    attacked_presence_rate = (attacked_present / float(total_users)) if total_users > 0 else 0.0
+    mean_baseline_rank = (sum(baseline_ranks) / float(len(baseline_ranks))) if baseline_ranks else None
+    mean_attacked_rank = (sum(attacked_ranks) / float(len(attacked_ranks))) if attacked_ranks else None
+    mean_lift = (sum(lifts) / float(len(lifts))) if lifts else None
+
+    return {
+        "applicable": True,
+        "target_movie_id": int(target_movie_id),
+        "users": int(total_users),
+        "target_in_retrieval_baseline_users": int(baseline_present),
+        "target_in_retrieval_attacked_users": int(attacked_present),
+        "target_in_retrieval_baseline_rate": round(float(baseline_presence_rate), 6),
+        "target_in_retrieval_attacked_rate": round(float(attacked_presence_rate), 6),
+        "target_retrieval_rank_changed_users": int(rank_changed),
+        "target_retrieval_rank_changed_rate": round((rank_changed / float(total_users)) if total_users > 0 else 0.0, 6),
+        "target_retrieval_mean_rank_baseline": round(float(mean_baseline_rank), 6)
+        if mean_baseline_rank is not None
+        else None,
+        "target_retrieval_mean_rank_attacked": round(float(mean_attacked_rank), 6)
+        if mean_attacked_rank is not None
+        else None,
+        "target_retrieval_mean_rank_lift": round(float(mean_lift), 6) if mean_lift is not None else None,
+    }
+
+
 def _round_metrics(values: dict[str, float]) -> dict[str, float]:
     return {key: round(float(value), 6) for key, value in values.items()}
+
+
+def _is_asr_applicable(*, attack_type: str, target_movie_id: int | None) -> bool:
+    if target_movie_id is None:
+        return False
+    return attack_type in {"targeted_promotion", "prompt_injection"}
+
+
+def _asr_applicability_reason(*, attack_type: str, target_movie_id: int | None) -> str:
+    if target_movie_id is None:
+        return "target_movie_id_not_configured"
+    if attack_type == "targeted_promotion":
+        return "targeted_promotion_with_target"
+    if attack_type == "prompt_injection":
+        return "prompt_injection_with_target"
+    return f"attack_type={attack_type} configured as non-targeted for ASR"
 
 
 def _normalize_label(label: str) -> str:

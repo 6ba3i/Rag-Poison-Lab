@@ -1,5 +1,5 @@
 {
-  "attack_type": "prompt_injection",
+  "attack_type": "targeted_promotion",
   "keyword_list": [
     "action",
     "drama",

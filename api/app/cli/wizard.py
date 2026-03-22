@@ -382,12 +382,46 @@ def _configure_attack_screen() -> None:
         )
         keyword_list = [item.strip() for item in keyword_text.split(",") if item.strip()]
 
+        target_boost_policy = current.target_boost_policy
+        target_boost_strength = current.target_boost_strength
+        target_fields = list(current.target_fields)
+        if attack_type == "targeted_promotion":
+            boost_policy = _select(
+                "Target boost policy",
+                choices=[
+                    Choice("keyword_burst", "keyword_burst"),
+                    Choice("aggressive", "aggressive"),
+                    Choice("disabled", "disabled"),
+                    Choice("Back", "back"),
+                ],
+                default=current.target_boost_policy,
+            )
+            if boost_policy in {None, "back"}:
+                continue
+            target_boost_policy = str(boost_policy)
+            target_boost_strength = _prompt_int(
+                "Target boost strength (1-20)",
+                current.target_boost_strength,
+                minimum=1,
+                maximum=20,
+            )
+            target_fields_text = _prompt_text(
+                "Target boost fields (comma-separated: title,genres,synopsis)",
+                ", ".join(current.target_fields),
+            )
+            parsed_fields = [item.strip().lower() for item in target_fields_text.split(",") if item.strip()]
+            if parsed_fields:
+                target_fields = parsed_fields
+
         config = AttackConfig(
             attack_type=attack_type,
             poison_fraction=poison_fraction,
             target_movie_id=target_movie_id,
             payload_text=payload_text,
             keyword_list=keyword_list,
+            target_boost_policy=target_boost_policy,
+            target_boost_strength=target_boost_strength,
+            target_fields=target_fields,
         )
 
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -416,12 +450,22 @@ def _run_experiments_screen() -> None:
         k = _prompt_int("K for metrics", 10, minimum=1)
 
         if choice == "single":
-            user_id = _prompt_int("User ID", 1, minimum=1)
+            user_id_text = _prompt_text("User ID (leave blank for auto viable selection)", "")
+            user_id_value: int | None
+            if user_id_text.strip() == "":
+                user_id_value = None
+            else:
+                try:
+                    user_id_value = int(user_id_text)
+                except Exception as exc:  # noqa: BLE001
+                    raise ValueError(f"Invalid user ID: {user_id_text}") from exc
+                if user_id_value <= 0:
+                    raise ValueError("User ID must be >= 1")
             summary = evaluate_run(
                 mode="single",
                 label=label,
                 k=k,
-                user_id=user_id,
+                user_id=user_id_value,
                 batch_size=1,
                 results_root=None,
             )

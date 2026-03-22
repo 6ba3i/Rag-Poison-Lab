@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from api.app.services.recs_service import (
@@ -10,8 +11,10 @@ from api.app.services.recs_service import (
 )
 from api.app.services.users_service import UsersService
 from api.app.settings import Settings
-from rag.recsys.candidate_gen import build_retrieval_query, build_user_context, search_candidates
+from rag.recsys.candidate_gen import build_es_query, build_retrieval_query, build_user_context, search_candidates
 from rag.trace.trace_builder import build_trace_docs, fallback_trace_docs_from_movies
+
+logger = logging.getLogger(__name__)
 
 
 class TraceService:
@@ -35,6 +38,7 @@ class TraceService:
         context = build_user_context(profile=profile, train_history=history_train)
         query_text = build_retrieval_query(context)
         index_name = INDEX_BY_MODE.get(mode, "movies")
+        query_body = build_es_query(query_text=query_text, seen_movie_ids=seen_movie_ids)
 
         candidates = search_candidates(
             es_client=self.es_client,
@@ -42,6 +46,16 @@ class TraceService:
             query_text=query_text,
             seen_movie_ids=seen_movie_ids,
             size=trace_retrieval_size(ranking_mode=llm_config.ranking_mode, k_retrieval=k_retrieval),
+            query_body=query_body,
+        )
+        logger.info(
+            "trace_request phase=trace mode=%s user_id=%s index_name=%s k_retrieval=%s ranking_mode=%s query_text=%s",
+            mode,
+            user_id,
+            index_name,
+            k_retrieval,
+            llm_config.ranking_mode,
+            query_text,
         )
 
         if candidates:
@@ -73,6 +87,7 @@ class TraceService:
         return {
             "ranking_mode": llm_config.ranking_mode,
             "retrieval_query": query_text,
+            "retrieval_query_body": query_body,
             "retrieved_docs": docs,
             "rerank_candidates": ranking.rerank_candidates,
             "rerank_prompt": ranking.rerank_prompt,

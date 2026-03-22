@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import logging
 from typing import Any, Iterable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -119,11 +123,25 @@ def search_candidates(
     seen_movie_ids: set[int],
     size: int,
     strict: bool = False,
+    query_body: dict[str, Any] | None = None,
 ) -> list[CandidateDoc]:
-    query = build_es_query(query_text=query_text, seen_movie_ids=seen_movie_ids)
+    query = query_body if query_body is not None else build_es_query(query_text=query_text, seen_movie_ids=seen_movie_ids)
+    logger.info(
+        "candidate_search_request phase=retrieval index=%s size=%s seen_movie_count=%s query_body=%s",
+        index_name,
+        size,
+        len(seen_movie_ids),
+        json.dumps(query, sort_keys=True, ensure_ascii=False),
+    )
     try:
         response = es_client.search(index=index_name, query=query, size=size)
     except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "candidate_search_error phase=retrieval index=%s size=%s strict=%s",
+            index_name,
+            size,
+            strict,
+        )
         if strict:
             raise RuntimeError(
                 f"Elasticsearch candidate retrieval failed for index '{index_name}': "
@@ -144,7 +162,18 @@ def search_candidates(
 
     if not isinstance(hits, list):
         return []
-    return parse_hits(hits=hits, seen_movie_ids=seen_movie_ids)
+    parsed = parse_hits(hits=hits, seen_movie_ids=seen_movie_ids)
+    logger.info(
+        "candidate_search_response phase=retrieval index=%s requested_size=%s raw_hits=%s parsed_candidates=%s poison_marked_candidates=%s candidate_ids=%s candidate_scores=%s",
+        index_name,
+        size,
+        len(hits),
+        len(parsed),
+        len([item for item in parsed if item.poison_marker]),
+        [item.movie_id for item in parsed],
+        [round(float(item.bm25_score), 6) for item in parsed],
+    )
+    return parsed
 
 
 def parse_hits(*, hits: Iterable[object], seen_movie_ids: set[int]) -> list[CandidateDoc]:

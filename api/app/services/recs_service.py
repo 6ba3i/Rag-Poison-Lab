@@ -12,6 +12,7 @@ from common.schemas.llm_config import LlmConfig, RankingMode, default_llm_config
 from rag.recsys.candidate_gen import (
     CandidateDoc,
     UserPreferenceContext,
+    build_es_query,
     build_retrieval_query,
     build_user_context,
     fallback_candidates_from_movies,
@@ -288,6 +289,19 @@ class RecsService:
         context = build_user_context(profile=profile, train_history=history_train)
         query_text = build_retrieval_query(context)
         index_name = INDEX_BY_MODE.get(mode, "movies")
+        query_body = build_es_query(query_text=query_text, seen_movie_ids=seen_movie_ids)
+
+        logger.info(
+            "recs_request phase=recommendation mode=%s user_id=%s k=%s ranking_mode=%s index_name=%s seen_history_split=%s strict_retrieval=%s query_text=%s",
+            mode,
+            user_id,
+            k,
+            llm_config.ranking_mode,
+            index_name,
+            seen_history_split,
+            strict_retrieval,
+            query_text,
+        )
 
         candidates_from_es = search_candidates(
             es_client=self.es_client,
@@ -296,6 +310,7 @@ class RecsService:
             seen_movie_ids=seen_movie_ids,
             size=recommendation_retrieval_size(ranking_mode=llm_config.ranking_mode, k=k),
             strict=strict_retrieval,
+            query_body=query_body,
         )
         candidates = list(candidates_from_es)
 
@@ -330,6 +345,18 @@ class RecsService:
             llm_client=victim_client,
             log_victim_unavailable=log_victim_unavailable,
         )
+        target_movie_ids = [item.movie_id for item in candidates]
+        target_payload_docs = [item.movie_id for item in candidates if item.poison_payload.strip()]
+        logger.info(
+            "recs_candidates phase=recommendation mode=%s user_id=%s index_name=%s retrieved_from_es_count=%s fallback_added=%s candidate_ids=%s poison_payload_candidate_ids=%s",
+            mode,
+            user_id,
+            index_name,
+            len(candidates_from_es),
+            fallback_added,
+            target_movie_ids,
+            target_payload_docs,
+        )
 
         explanations = generate_explanations(
             llm_client=victim_client,
@@ -355,11 +382,16 @@ class RecsService:
             debug = {
                 "index_name": index_name,
                 "retrieval_query": query_text,
+                "retrieval_query_body": query_body,
                 "retrieved_from_es_count": len(candidates_from_es),
                 "retrieved_from_es": [_candidate_debug(item) for item in candidates_from_es[:DEBUG_CANDIDATE_LIMIT]],
+                "retrieved_from_es_movie_ids": [int(item.movie_id) for item in candidates_from_es],
+                "retrieved_from_es_scores": [round(float(item.bm25_score), 6) for item in candidates_from_es],
+                "retrieved_from_es_poisoned_movie_ids": [int(item.movie_id) for item in candidates_from_es if item.poison_marker],
                 "fallback_used": bool(fallback_added > 0),
                 "fallback_added": int(fallback_added),
                 "ranking_input_candidates": [_candidate_debug(item) for item in candidates[:DEBUG_CANDIDATE_LIMIT]],
+                "ranking_input_movie_ids": [int(item.movie_id) for item in candidates],
                 "rerank_prompt": ranking.rerank_prompt,
                 "rerank_candidates": ranking.rerank_candidates,
                 "rerank_parsed_order": ranking.rerank_parsed_order,
@@ -369,6 +401,16 @@ class RecsService:
             if ranking.rerank_prompt is not None:
                 debug["rerank_prompt_has_poison_payload"] = "poison_payload" in ranking.rerank_prompt
                 debug["rerank_prompt_has_synopsis"] = "synopsis:" in ranking.rerank_prompt
+
+        logger.info(
+            "recs_result phase=recommendation mode=%s user_id=%s index_name=%s ranking_mode=%s final_movie_ids=%s rerank_fallback=%s",
+            mode,
+            user_id,
+            index_name,
+            llm_config.ranking_mode,
+            [int(item["movie_id"]) for item in output],
+            ranking.rerank_fallback,
+        )
 
         return {
             "items": output,
