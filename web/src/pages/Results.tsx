@@ -28,6 +28,33 @@ function attackTypeForDetail(detail: RunDetailResponse | null): string {
   return typeof attackType === "string" ? attackType : "-";
 }
 
+function outcomeBadgeClass(label: string): string {
+  if (label === "Attack succeeded") {
+    return "badge attack mono";
+  }
+  if (label === "Target influence increased") {
+    return "badge warning mono";
+  }
+  return "badge neutral mono";
+}
+
+function asrValueClass(value: number | undefined): string {
+  if (value === 1) {
+    return "metric-table-value tone-attack weight-strong";
+  }
+  if (value === 0) {
+    return "metric-table-value tone-success";
+  }
+  return "metric-table-value tone-warning";
+}
+
+function deltaNdcgClass(value: number | undefined): string {
+  if (value === 0 || value === undefined) {
+    return "metric-table-value tone-tertiary";
+  }
+  return value > 0 ? "metric-table-value tone-warning" : "metric-table-value tone-attack";
+}
+
 export function Results(): JSX.Element {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -180,20 +207,20 @@ export function Results(): JSX.Element {
                         onClick={() => void loadDetail(run.label)}
                       >
                         <td>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <span>{run.label}</span>
-                            <span className="text-meta">{formatTimestamp(run.generated_at_utc)}</span>
+                          <div className="run-label-cell">
+                            <span className="run-label-id">{run.label}</span>
+                            <span className="run-label-time">{formatTimestamp(run.generated_at_utc)}</span>
                           </div>
                         </td>
                         <td>{run.mode ?? "-"}</td>
                         <td>{attackTypeForDetail(runDetail)}</td>
                         <td>{formatNumber(run.target_movie_id)}</td>
                         <td>
-                          <span className={["badge", outcome.tone].join(" ")}>{outcome.label}</span>
+                          <span className={outcomeBadgeClass(outcome.label)}>{outcome.label}</span>
                         </td>
-                        <td>{formatMetric(run.attacked.asr)}</td>
-                        <td>{formatMetric(run.delta.ndcg)}</td>
-                        <td>{formatMetric(run.delta.mrr)}</td>
+                        <td className={asrValueClass(run.attacked.asr)}>{formatMetric(run.attacked.asr)}</td>
+                        <td className={deltaNdcgClass(run.delta.ndcg)}>{formatMetric(run.delta.ndcg)}</td>
+                        <td className="metric-table-value">{formatMetric(run.delta.mrr)}</td>
                       </tr>
                     );
                   })}

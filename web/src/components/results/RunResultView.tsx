@@ -5,7 +5,6 @@ import { formatMetric, formatNumber, formatTimestamp } from "../../lib/format";
 import {
   buildHeroInfo,
   getAttackConfigInfo,
-  getMetricDeltaTone,
   getTargetRetrievalInfo,
   listMetricRows,
   metricVisibleInRun,
@@ -29,15 +28,30 @@ function formatDelta(value: number | null): string {
   if (value === null) {
     return "-";
   }
-  const rendered = value.toFixed(3);
-  return value > 0 ? `+${rendered}` : rendered;
+  if (value > 0) {
+    return `▲ ${value.toFixed(3)}`;
+  }
+  if (value < 0) {
+    return `▼ ${Math.abs(value).toFixed(3)}`;
+  }
+  return value.toFixed(3);
 }
 
-function toneClass(tone: "success" | "warning" | "danger" | "neutral"): string {
-  if (tone === "neutral") {
-    return "";
+function deltaToneClass(value: number | null): "tone-warning" | "tone-attack" | "tone-tertiary" {
+  if (value === null || value === 0) {
+    return "tone-tertiary";
   }
-  return tone;
+  return value > 0 ? "tone-warning" : "tone-attack";
+}
+
+function outcomeBadgeClass(label: string): string {
+  if (label === "Attack succeeded") {
+    return "badge attack mono";
+  }
+  if (label === "Target influence increased") {
+    return "badge warning mono";
+  }
+  return "badge neutral mono";
 }
 
 function yesNo(value: boolean | null): string {
@@ -89,12 +103,12 @@ export function RunResultView({ detail, rawSections = [] }: RunResultViewProps):
         </div>
 
         <div className="hero-badges" style={{ marginTop: 12 }}>
-          <span className="badge primary">{hero.runLabel}</span>
-          <span className="badge">Mode: {hero.mode}</span>
-          <span className="badge warning">Attack: {hero.attackType}</span>
-          <span className="badge">Target: {formatNumber(hero.targetMovieId)}</span>
-          {hero.selectedUsers.length > 0 ? <span className="badge">Users: {hero.selectedUsers.join(", ")}</span> : null}
-          <span className={["badge", toneClass(hero.outcome.tone)].join(" ")}>{hero.outcome.label}</span>
+          <span className="run-label-chip">{hero.runLabel}</span>
+          <span className="badge neutral mono">Mode: {hero.mode}</span>
+          <span className="badge attack mono">Attack: {hero.attackType}</span>
+          <span className="badge neutral mono">Target: {formatNumber(hero.targetMovieId)}</span>
+          {hero.selectedUsers.length > 0 ? <span className="badge neutral mono">Users: {hero.selectedUsers.join(", ")}</span> : null}
+          <span className={outcomeBadgeClass(hero.outcome.label)}>{hero.outcome.label}</span>
         </div>
 
         <p className="run-interpretation">{hero.interpretation}</p>
@@ -106,24 +120,22 @@ export function RunResultView({ detail, rawSections = [] }: RunResultViewProps):
 
         <div className="metric-grid metrics-kpi" style={{ marginTop: 12 }}>
           {metricRows.map((row) => {
-            const deltaTone = getMetricDeltaTone(row.key, row.delta);
-
             return (
               <article key={row.key} className="metric-card kpi-card">
                 <p className="metric-label">{row.label}</p>
-                <div className="kpi-lines">
-                  <p>
-                    <span>Baseline</span>
-                    <strong>{formatMetric(row.baseline)}</strong>
-                  </p>
-                  <p>
-                    <span>Attacked</span>
-                    <strong>{formatMetric(row.attacked)}</strong>
-                  </p>
-                  <p className={["metric-delta", toneClass(deltaTone)].join(" ")}>
-                    <span>Delta</span>
-                    <strong>{formatDelta(row.delta)}</strong>
-                  </p>
+                <div className="metric-rows">
+                  <div className="metric-line baseline">
+                    <span className="metric-line-label">Baseline</span>
+                    <strong className="metric-line-value">{formatMetric(row.baseline)}</strong>
+                  </div>
+                  <div className="metric-line attacked">
+                    <span className="metric-line-label">Attacked</span>
+                    <strong className="metric-line-value">{formatMetric(row.attacked)}</strong>
+                  </div>
+                  <div className={["metric-line", "delta", deltaToneClass(row.delta)].join(" ")}>
+                    <span className="metric-line-label">Delta</span>
+                    <strong className="metric-line-value">{formatDelta(row.delta)}</strong>
+                  </div>
                 </div>
               </article>
             );

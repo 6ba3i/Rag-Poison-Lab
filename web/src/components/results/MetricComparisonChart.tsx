@@ -38,14 +38,24 @@ function clampToUnit(value: number): number {
   return value;
 }
 
+function connectorColor(baseline: number, attacked: number): string {
+  if (attacked > baseline) {
+    return "rgba(245, 158, 11, 0.5)";
+  }
+  if (attacked < baseline) {
+    return "rgba(239, 68, 68, 0.5)";
+  }
+  return "rgba(61, 79, 106, 0.3)";
+}
+
 function DumbbellChart({ rows }: { rows: MetricRow[] }): JSX.Element {
   const visibleRows = rows.filter((row) => row.baseline !== null && row.attacked !== null);
 
   return (
     <div className="dumbbell-chart">
       <div className="dumbbell-legend">
-        <span className="legend-item baseline">Baseline</span>
-        <span className="legend-item attacked">Attacked</span>
+        <span className="legend-item baseline is-active">Baseline</span>
+        <span className="legend-item attacked is-active">Attacked</span>
       </div>
 
       <div className="dumbbell-axis">
@@ -65,7 +75,14 @@ function DumbbellChart({ rows }: { rows: MetricRow[] }): JSX.Element {
               <div className="dumbbell-metric">{row.label}</div>
               <div className="dumbbell-track-wrap">
                 <div className="dumbbell-track" />
-                <div className="dumbbell-connector" style={{ left: `${left * 100}%`, width: `${width * 100}%` }} />
+                <div
+                  className="dumbbell-connector"
+                  style={{
+                    left: `${left * 100}%`,
+                    width: `${width * 100}%`,
+                    background: connectorColor(baseline, attacked),
+                  }}
+                />
                 <div className="dumbbell-dot baseline" style={{ left: `${baseline * 100}%` }} />
                 <div className="dumbbell-dot attacked" style={{ left: `${attacked * 100}%` }} />
               </div>
@@ -95,7 +112,7 @@ function GroupedBarChart({ rows }: { rows: MetricRow[] }): JSX.Element {
         groupMode="grouped"
         valueScale={{ type: "linear", min: 0, max: 1 }}
         indexScale={{ type: "band", round: true }}
-        colors={({ id }) => (id === "baseline" ? "#5f728f" : "#d8a231")}
+        colors={({ id }) => (id === "baseline" ? "#3B82F6" : "#EF4444")}
         borderRadius={4}
         enableGridY
         axisBottom={{
@@ -110,33 +127,33 @@ function GroupedBarChart({ rows }: { rows: MetricRow[] }): JSX.Element {
         }}
         theme={{
           text: {
-            fill: "#94a3b8",
+            fill: "#6B7FA0",
             fontSize: 12,
           },
           axis: {
             ticks: {
-              line: { stroke: "#24324a" },
-              text: { fill: "#94a3b8" },
+              line: { stroke: "rgba(255, 255, 255, 0.09)" },
+              text: { fill: "#6B7FA0" },
             },
             domain: {
-              line: { stroke: "#24324a" },
+              line: { stroke: "rgba(255, 255, 255, 0.09)" },
             },
           },
           grid: {
-            line: { stroke: "#24324a", strokeOpacity: 0.45 },
+            line: { stroke: "rgba(255, 255, 255, 0.09)", strokeOpacity: 0.45 },
           },
           tooltip: {
             container: {
               background: "#111827",
-              color: "#e5edf7",
-              border: "1px solid #24324a",
+              color: "#E4EAF4",
+              border: "1px solid rgba(255, 255, 255, 0.09)",
               borderRadius: "8px",
             },
           },
         }}
         labelSkipWidth={16}
         labelSkipHeight={16}
-        labelTextColor="#d6deeb"
+        labelTextColor="#E4EAF4"
         tooltip={({ id, value, color }) => (
           <div className="chart-tooltip">
             <span className="chart-tooltip-dot" style={{ background: color }} />

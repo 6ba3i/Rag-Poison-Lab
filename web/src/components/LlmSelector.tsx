@@ -31,6 +31,7 @@ function getStatus(value: LlmRoleConfig, option: LlmProviderOption | undefined):
 export function LlmSelector({ roleLabel, value, providerOptions, onChange }: LlmSelectorProps): JSX.Element {
   const selectedOption = providerOptions.find((item) => item.provider === value.provider);
   const status = getStatus(value, selectedOption);
+  const roleToneClass = roleLabel.toLowerCase().includes("victim") ? "settings-section-victim" : "settings-section-attacker";
 
   const modelOptions = selectedOption ? [...selectedOption.models] : [];
   if (!modelOptions.includes(value.model)) {
@@ -44,10 +45,10 @@ export function LlmSelector({ roleLabel, value, providerOptions, onChange }: Llm
   }
 
   return (
-    <section className="surface">
+    <section className={["surface", "settings-section", roleToneClass].join(" ")}>
       <div className="status-row">
         <h3 className="card-title">{roleLabel}</h3>
-        <span className={["badge", status.tone].join(" ")}>{status.label}</span>
+        <span className={["badge", "mono", status.tone].join(" ")}>{status.label}</span>
       </div>
 
       <div className="form-grid" style={{ marginTop: 16 }}>

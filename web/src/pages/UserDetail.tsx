@@ -68,12 +68,7 @@ export function UserDetail(): JSX.Element {
     void load();
   }, [load]);
 
-  const topGenres = useMemo(() => {
-    if (!profile || profile.top_genres.length === 0) {
-      return "-";
-    }
-    return profile.top_genres.map((item) => `${item.genre} (${item.count})`).join(", ");
-  }, [profile]);
+  const topGenres = useMemo(() => profile?.top_genres ?? [], [profile]);
 
   return (
     <div className="page-wrap">
@@ -94,19 +89,29 @@ export function UserDetail(): JSX.Element {
       </header>
 
       <section className="surface">
-        <div className="status-row">
-          <div className="inline-actions">
-            <div className="surface-elevated" style={{ padding: "10px 12px" }}>
-              <p className="text-meta">Ratings</p>
-              <p style={{ margin: "4px 0 0", fontSize: 14 }}>{profile?.rating_count ?? "-"}</p>
+        <div className="status-row" style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div className="user-stats-block" style={{ flex: 1 }}>
+            <div className="user-stat">
+              <p className="user-preview-stat-label">Ratings</p>
+              <p className="user-preview-stat-value">{profile?.rating_count ?? "-"}</p>
             </div>
-            <div className="surface-elevated" style={{ padding: "10px 12px" }}>
-              <p className="text-meta">Mean rating</p>
-              <p style={{ margin: "4px 0 0", fontSize: 14 }}>{profile ? profile.mean_rating.toFixed(2) : "-"}</p>
+            <div className="user-stat">
+              <p className="user-preview-stat-label">Mean rating</p>
+              <p className="user-preview-stat-value">{profile ? profile.mean_rating.toFixed(2) : "-"}</p>
             </div>
-            <div className="surface-elevated" style={{ padding: "10px 12px", minWidth: 260 }}>
-              <p className="text-meta">Top genres</p>
-              <p style={{ margin: "4px 0 0", fontSize: 14 }}>{topGenres}</p>
+            <div className="user-stat">
+              <p className="user-preview-stat-label">Top genres</p>
+              {topGenres.length > 0 ? (
+                <div className="genre-pills" style={{ marginTop: 8 }}>
+                  {topGenres.map((item) => (
+                    <span key={item.genre} className="genre-pill">
+                      {item.genre} &middot; {item.count}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-secondary)" }}>-</p>
+              )}
             </div>
           </div>
 

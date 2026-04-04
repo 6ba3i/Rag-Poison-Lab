@@ -351,7 +351,14 @@ export function Experiments(): JSX.Element {
           ) : null}
 
           <div className="status-row">
-            <p className="section-caption">{runStatus ?? "Ready to execute."}</p>
+            {runStatus ? (
+              <p className="run-status-text">{runStatus}</p>
+            ) : (
+              <p className="run-ready">
+                <span className="status-dot" />
+                <span>Ready to execute</span>
+              </p>
+            )}
             <button type="button" className="btn btn-primary" onClick={() => void handleRun()} disabled={running}>
               {running ? "Running…" : "Run experiment"}
             </button>
@@ -365,11 +372,11 @@ export function Experiments(): JSX.Element {
             <div className="stack" style={{ marginTop: 12 }}>
               <div className="status-row">
                 <span className="text-meta">Attack type</span>
-                <span className="badge warning">{attackSettings?.attack_type ?? "-"}</span>
+                <span className="badge attack mono">{attackSettings?.attack_type ?? "-"}</span>
               </div>
               <div className="status-row">
                 <span className="text-meta">Target movie</span>
-                <span className="badge">{attackSettings?.target_movie_id ?? "-"}</span>
+                <span className="badge neutral mono">{attackSettings?.target_movie_id ?? "-"}</span>
               </div>
               <div>
                 <p className="text-meta">Keywords</p>
@@ -384,7 +391,7 @@ export function Experiments(): JSX.Element {
               <div className="stack" style={{ marginTop: 12 }}>
                 <div className="status-row">
                   <span className="text-meta">Label</span>
-                  <span className="badge primary">{latestRun.label}</span>
+                  <span className="run-label-chip">{latestRun.label}</span>
                 </div>
                 <div className="status-row">
                   <span className="text-meta">Generated</span>
@@ -392,11 +399,11 @@ export function Experiments(): JSX.Element {
                 </div>
                 <div className="status-row">
                   <span className="text-meta">Delta ASR</span>
-                  <span className="badge warning">{formatMetric(latestRun.delta.asr)}</span>
+                  <span className="badge warning mono">{formatMetric(latestRun.delta.asr)}</span>
                 </div>
                 <div className="status-row">
                   <span className="text-meta">Delta NDCG</span>
-                  <span className="badge danger">{formatMetric(latestRun.delta.ndcg)}</span>
+                  <span className="badge attack mono">{formatMetric(latestRun.delta.ndcg)}</span>
                 </div>
                 <Link className="btn" to="/results">
                   Inspect in results

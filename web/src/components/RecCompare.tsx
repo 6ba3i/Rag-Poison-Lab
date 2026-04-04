@@ -20,8 +20,8 @@ function RecColumn({ label, tone, items, otherIds }: ColumnProps): JSX.Element {
   return (
     <section className={["comparison-column", tone].join(" ")}>
       <div className="status-row">
-        <h3 className="card-title">{label}</h3>
-        <span className={["badge", tone === "baseline" ? "primary" : "warning"].join(" ")}>{items.length} items</span>
+        <h3 className={["rec-column-header", tone].join(" ")}>{label}</h3>
+        <span className={["badge", "mono", tone === "baseline" ? "baseline" : "attack"].join(" ")}>{items.length} items</span>
       </div>
 
       <div className="rec-list" style={{ marginTop: 12 }}>
@@ -34,23 +34,21 @@ function RecColumn({ label, tone, items, otherIds }: ColumnProps): JSX.Element {
             <article key={key} className={["rec-item", changed ? "changed" : ""].join(" ")}>
               <div className="rec-title-row">
                 <div>
-                  <p className="rec-title">
-                    #{index + 1} {item.title}
-                  </p>
+                  <p className="rank-label">#{index + 1}</p>
+                  <p className="rec-title">{item.title}</p>
                   <p className="rec-meta">{item.genres.join(", ") || "No genres"}</p>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <p className="text-meta">Score</p>
-                  <p style={{ margin: "4px 0 0", fontSize: 14, fontWeight: 600 }}>{item.score.toFixed(3)}</p>
+                  <p className="rec-score-label">Score</p>
+                  <p className="rec-score-value">{item.score.toFixed(3)}</p>
                 </div>
               </div>
 
               <div className="inline-actions" style={{ marginTop: 10 }}>
-                {changed ? <span className="badge warning">Changed</span> : <span className="badge">Shared</span>}
+                {changed ? <span className="badge warning mono">Changed</span> : <span className="badge neutral mono">Shared</span>}
                 <button
                   type="button"
-                  className="btn btn-ghost"
-                  style={{ height: 30, fontSize: 12 }}
+                  className="btn btn-secondary"
                   onClick={() => setExpanded((current) => ({ ...current, [key]: !isExpanded }))}
                 >
                   {isExpanded ? "Hide explanation" : "Show explanation"}

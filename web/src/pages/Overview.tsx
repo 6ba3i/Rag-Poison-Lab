@@ -5,6 +5,27 @@ import { ApiError, getAttackSettings, getLlmSettings, listResultRuns } from "../
 import type { AttackSettingsResponse, LlmConfig, RunSummary } from "../api/types";
 import { formatMetric, formatNumber, formatTimestamp } from "../lib/format";
 
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asrCardTone(value: number | null): "tone-attack" | "tone-success" | "tone-warning" {
+  if (value === 1) {
+    return "tone-attack";
+  }
+  if (value === 0) {
+    return "tone-success";
+  }
+  return "tone-warning";
+}
+
+function ndcgValueTone(value: number | null): "tone-warning" | "tone-attack" | "tone-tertiary" {
+  if (value === null || value === 0) {
+    return "tone-tertiary";
+  }
+  return value > 0 ? "tone-warning" : "tone-attack";
+}
+
 export function Overview(): JSX.Element {
   const [attackSettings, setAttackSettings] = useState<AttackSettingsResponse | null>(null);
   const [llmSettings, setLlmSettings] = useState<LlmConfig | null>(null);
@@ -49,6 +70,10 @@ export function Overview(): JSX.Element {
     };
   }, []);
 
+  const asrDelta = asNumber(latestRun?.delta?.asr);
+  const ndcgDelta = asNumber(latestRun?.delta?.ndcg);
+  const poisonFraction = attackSettings ? Math.max(0, Math.min(1, attackSettings.poison_fraction)) : null;
+
   return (
     <div className="page-wrap">
       <header className="page-header">
@@ -75,19 +100,19 @@ export function Overview(): JSX.Element {
           <section className="metric-grid">
             <article className="metric-card">
               <p className="metric-label">Latest run</p>
-              <p className="metric-value">{latestRun?.label ?? "No runs"}</p>
+              <p className="metric-value run-id">{latestRun?.label ?? "No runs"}</p>
             </article>
             <article className="metric-card">
               <p className="metric-label">Evaluated users</p>
-              <p className="metric-value">{formatNumber(latestRun?.evaluated_users)}</p>
+              <p className="metric-value number">{formatNumber(latestRun?.evaluated_users)}</p>
             </article>
-            <article className="metric-card">
+            <article className={["metric-card", asrCardTone(asrDelta)].join(" ")}>
               <p className="metric-label">Delta ASR</p>
-              <p className="metric-value warning">{formatMetric(latestRun?.delta?.asr)}</p>
+              <p className={["metric-value", "number", asrCardTone(asrDelta)].join(" ")}>{formatMetric(latestRun?.delta?.asr)}</p>
             </article>
             <article className="metric-card">
               <p className="metric-label">Delta NDCG</p>
-              <p className="metric-value danger">{formatMetric(latestRun?.delta?.ndcg)}</p>
+              <p className={["metric-value", "number", ndcgValueTone(ndcgDelta)].join(" ")}>{formatMetric(latestRun?.delta?.ndcg)}</p>
             </article>
           </section>
 
@@ -99,19 +124,34 @@ export function Overview(): JSX.Element {
               <div className="stack" style={{ marginTop: 16 }}>
                 <div className="surface-elevated status-row">
                   <p className="card-title">Attack type</p>
-                  <span className="badge warning">{attackSettings?.attack_type ?? "-"}</span>
+                  <span className="badge attack mono">{attackSettings?.attack_type ?? "-"}</span>
                 </div>
                 <div className="surface-elevated status-row">
                   <p className="card-title">Target movie</p>
-                  <span className="badge">{formatNumber(attackSettings?.target_movie_id)}</span>
+                  <span className="badge neutral mono">{formatNumber(attackSettings?.target_movie_id)}</span>
                 </div>
                 <div className="surface-elevated status-row">
                   <p className="card-title">Poison fraction</p>
-                  <span className="badge">{attackSettings ? attackSettings.poison_fraction.toFixed(2) : "-"}</span>
+                  <span className="poison-fraction">
+                    <span className="mono">{attackSettings ? attackSettings.poison_fraction.toFixed(2) : "-"}</span>
+                    <span className="poison-bar" aria-hidden="true">
+                      <span className="poison-bar-fill" style={{ width: `${(poisonFraction ?? 0) * 100}%` }} />
+                    </span>
+                  </span>
                 </div>
                 <div className="surface-elevated">
                   <p className="text-meta">Keywords</p>
-                  <p style={{ marginTop: 8, fontSize: 14 }}>{attackSettings?.keyword_list.join(", ") || "-"}</p>
+                  {attackSettings?.keyword_list.length ? (
+                    <div className="keyword-pills" style={{ marginTop: 8 }}>
+                      {attackSettings.keyword_list.map((keyword) => (
+                        <span key={keyword} className="keyword-pill">
+                          {keyword}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-secondary)" }}>-</p>
+                  )}
                 </div>
               </div>
             </article>
@@ -123,15 +163,19 @@ export function Overview(): JSX.Element {
               <div className="stack" style={{ marginTop: 16 }}>
                 <div className="surface-elevated status-row">
                   <p className="card-title">Victim model</p>
-                  <span className="badge primary">{llmSettings ? `${llmSettings.victim.provider}:${llmSettings.victim.model}` : "-"}</span>
+                  <span className="badge baseline mono">
+                    {llmSettings ? `${llmSettings.victim.provider}:${llmSettings.victim.model}` : "-"}
+                  </span>
                 </div>
                 <div className="surface-elevated status-row">
                   <p className="card-title">Attacker model</p>
-                  <span className="badge">{llmSettings ? `${llmSettings.attacker.provider}:${llmSettings.attacker.model}` : "-"}</span>
+                  <span className="badge attack mono">
+                    {llmSettings ? `${llmSettings.attacker.provider}:${llmSettings.attacker.model}` : "-"}
+                  </span>
                 </div>
                 <div className="surface-elevated status-row">
                   <p className="card-title">Ranking mode</p>
-                  <span className={["badge", llmSettings?.ranking_mode === "llm_rerank" ? "warning" : "success"].join(" ")}>
+                  <span className="badge accent mono">
                     {llmSettings?.ranking_mode ?? "-"}
                   </span>
                 </div>

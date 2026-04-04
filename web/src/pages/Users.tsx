@@ -116,13 +116,19 @@ export function Users(): JSX.Element {
           <div className="inline-actions" style={{ flex: 1 }}>
             <label className="field" style={{ minWidth: 280, flex: 1 }}>
               <span className="field-label">Search user id</span>
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by user id"
-                className="input"
-              />
+              <div className="search-field">
+                <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.5-3.5" />
+                </svg>
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search by user id"
+                  className="input search-input"
+                />
+              </div>
             </label>
             <label className="field" style={{ minWidth: 220 }}>
               <span className="field-label">Sort</span>
@@ -164,8 +170,7 @@ export function Users(): JSX.Element {
                       <td>
                         <button
                           type="button"
-                          className="btn btn-ghost"
-                          style={{ height: 30, fontSize: 12 }}
+                          className="btn btn-secondary"
                           onClick={(event) => {
                             event.stopPropagation();
                             navigate(`/users/${user.user_id}`);
@@ -184,25 +189,33 @@ export function Users(): JSX.Element {
               <h3 className="card-title">User preview</h3>
               {selectedUserId ? <p className="section-caption">Selected user #{selectedUserId}</p> : <p className="section-caption">Select a user.</p>}
 
-              <div className="stack" style={{ marginTop: 14 }}>
-                <div className="status-row">
-                  <p className="text-meta">Ratings</p>
-                  <span className="badge">{previewProfile?.rating_count ?? "-"}</span>
-                </div>
-                <div className="status-row">
-                  <p className="text-meta">Mean rating</p>
-                  <span className="badge">{previewProfile ? previewProfile.mean_rating.toFixed(2) : "-"}</span>
+              <div className="user-preview-values" style={{ marginTop: 14 }}>
+                <div>
+                  <p className="user-preview-stat-label">Ratings</p>
+                  <p className="user-preview-stat-value">{previewProfile?.rating_count ?? "-"}</p>
                 </div>
                 <div>
-                  <p className="text-meta">Top genres</p>
-                  <p style={{ marginTop: 8, fontSize: 14 }}>
-                    {previewProfile?.top_genres.map((item) => `${item.genre} (${item.count})`).join(", ") || "-"}
-                  </p>
+                  <p className="user-preview-stat-label">Mean rating</p>
+                  <p className="user-preview-stat-value">{previewProfile ? previewProfile.mean_rating.toFixed(2) : "-"}</p>
+                </div>
+                <div>
+                  <p className="user-preview-stat-label">Top genres</p>
+                  {previewProfile?.top_genres.length ? (
+                    <div className="genre-pills" style={{ marginTop: 8 }}>
+                      {previewProfile.top_genres.map((item) => (
+                        <span key={item.genre} className="genre-pill">
+                          {item.genre} &middot; {item.count}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-secondary)" }}>-</p>
+                  )}
                 </div>
 
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-primary btn-full"
                   disabled={!selectedUserId}
                   onClick={() => selectedUserId && navigate(`/users/${selectedUserId}`)}
                 >

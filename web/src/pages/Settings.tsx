@@ -81,6 +81,12 @@ export function Settings(): JSX.Element {
     }
   }
 
+  const saveFailed = Boolean(saveStatus && saveStatus.startsWith("Save failed"));
+  const isSaved = saveStatus === "Saved settings.";
+  const statusText = saveStatus ?? "Unsaved changes";
+  const statusClass = saveFailed ? "failed" : isSaved ? "saved" : "unsaved";
+  const statusDotClass = saveFailed ? "attack" : isSaved ? "success" : "warning";
+
   return (
     <div className="page-wrap">
       <header className="page-header">
@@ -113,7 +119,10 @@ export function Settings(): JSX.Element {
 
           <section className="surface">
             <div className="status-row">
-              <p className="section-caption">Status: {saveStatus ?? "Unsaved changes"}</p>
+              <p className={["settings-status", statusClass].join(" ")}>
+                <span className={["status-dot", statusDotClass].join(" ")} />
+                <span>{statusText}</span>
+              </p>
               <button type="button" onClick={() => void onSave()} className="btn btn-primary">
                 Save settings
               </button>

@@ -13,6 +13,8 @@ function navLinkClass(isActive: boolean): string {
 }
 
 export function Layout(): JSX.Element {
+  const runActive = false;
+
   return (
     <div className="app-shell">
       <aside className="app-sidebar">
@@ -28,6 +30,13 @@ export function Layout(): JSX.Element {
             </NavLink>
           ))}
         </nav>
+
+        <div className="sidebar-status" role="status" aria-live="polite">
+          <span className={["status-dot", runActive ? "live" : ""].join(" ").trim()} />
+          <span className={["sidebar-status-label", runActive ? "live" : ""].join(" ").trim()}>
+            {runActive ? "Run active" : "Idle"}
+          </span>
+        </div>
       </aside>
 
       <main className="app-main">
