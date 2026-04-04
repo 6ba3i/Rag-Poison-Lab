@@ -1,9 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { ApiError, getAttackSettings, listResultRuns, runExperiment } from "../api/client";
-import type { AttackSettingsResponse, ExperimentRunRequest, ExperimentRunResponse, RunSummary } from "../api/types";
+import {
+  ApiError,
+  getAttackSettings,
+  getRecommendations,
+  getResultRunDetail,
+  listResultRuns,
+  runExperiment,
+} from "../api/client";
+import type {
+  AttackSettingsResponse,
+  ExperimentRunRequest,
+  ExperimentRunResponse,
+  RecommendationItem,
+  RunDetailResponse,
+  RunSummary,
+} from "../api/types";
 import { formatMetric, formatTimestamp } from "../lib/format";
+import { RecCompare } from "../components/RecCompare";
+import { RunResultView } from "../components/results/RunResultView";
 
 type ExperimentMode = "single" | "batch" | "full";
 type RunProfile = "pipeline" | "single_demo";
@@ -31,9 +47,24 @@ export function Experiments(): JSX.Element {
 
   const [attackSettings, setAttackSettings] = useState<AttackSettingsResponse | null>(null);
   const [latestRun, setLatestRun] = useState<RunSummary | null>(null);
+  const [latestRunDetail, setLatestRunDetail] = useState<RunDetailResponse | null>(null);
   const [running, setRunning] = useState(false);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ExperimentRunResponse | null>(null);
+
+  const [liveBaselineRecs, setLiveBaselineRecs] = useState<RecommendationItem[]>([]);
+  const [liveAttackedRecs, setLiveAttackedRecs] = useState<RecommendationItem[]>([]);
+  const [liveRecLoading, setLiveRecLoading] = useState(false);
+  const [liveRecError, setLiveRecError] = useState<string | null>(null);
+
+  async function loadDetail(labelToLoad: string): Promise<void> {
+    try {
+      const detail = await getResultRunDetail(labelToLoad);
+      setLatestRunDetail(detail);
+    } catch {
+      setLatestRunDetail(null);
+    }
+  }
 
   useEffect(() => {
     let canceled = false;
@@ -41,14 +72,20 @@ export function Experiments(): JSX.Element {
     async function load(): Promise<void> {
       try {
         const [attackPayload, runsPayload] = await Promise.all([getAttackSettings(), listResultRuns(1)]);
-        if (!canceled) {
-          setAttackSettings(attackPayload);
-          setLatestRun(runsPayload.items[0] ?? null);
+        if (canceled) {
+          return;
+        }
+        const latest = runsPayload.items[0] ?? null;
+        setAttackSettings(attackPayload);
+        setLatestRun(latest);
+        if (latest) {
+          await loadDetail(latest.label);
         }
       } catch {
         if (!canceled) {
           setAttackSettings(null);
           setLatestRun(null);
+          setLatestRunDetail(null);
         }
       }
     }
@@ -67,6 +104,60 @@ export function Experiments(): JSX.Element {
       setRunProfile("pipeline");
     }
   }, [mode, runProfile]);
+
+  useEffect(() => {
+    let canceled = false;
+
+    async function loadLiveRecs(): Promise<void> {
+      if (!latestRunDetail || latestRunDetail.summary.mode !== "single") {
+        setLiveBaselineRecs([]);
+        setLiveAttackedRecs([]);
+        setLiveRecError(null);
+        return;
+      }
+
+      const firstUser = latestRunDetail.per_user[0]?.user_id;
+      if (typeof firstUser !== "number") {
+        setLiveBaselineRecs([]);
+        setLiveAttackedRecs([]);
+        setLiveRecError("Live recommendation comparison unavailable: user id not present in run artifacts.");
+        return;
+      }
+
+      const topK = latestRunDetail.summary.k ?? 10;
+      setLiveRecLoading(true);
+      setLiveRecError(null);
+
+      try {
+        const [baselinePayload, attackedPayload] = await Promise.all([
+          getRecommendations(firstUser, "baseline", topK),
+          getRecommendations(firstUser, "attacked", topK),
+        ]);
+
+        if (!canceled) {
+          setLiveBaselineRecs(baselinePayload);
+          setLiveAttackedRecs(attackedPayload);
+        }
+      } catch {
+        if (!canceled) {
+          setLiveBaselineRecs([]);
+          setLiveAttackedRecs([]);
+          setLiveRecError(
+            "Live recommendation comparison is currently unavailable. Run-result artifacts are still complete.",
+          );
+        }
+      } finally {
+        if (!canceled) {
+          setLiveRecLoading(false);
+        }
+      }
+    }
+
+    void loadLiveRecs();
+    return () => {
+      canceled = true;
+    };
+  }, [latestRunDetail]);
 
   async function handleRun(): Promise<void> {
     if (mode !== "single" && runProfile === "single_demo") {
@@ -106,8 +197,13 @@ export function Experiments(): JSX.Element {
       const response = await runExperiment(payload);
       setResult(response);
       setRunStatus("Experiment workflow completed.");
+
       const runs = await listResultRuns(1);
-      setLatestRun(runs.items[0] ?? null);
+      const latest = runs.items[0] ?? null;
+      setLatestRun(latest);
+      if (latest) {
+        await loadDetail(latest.label);
+      }
     } catch (err) {
       const message = err instanceof ApiError ? err.detail : "Experiment run failed";
       setRunStatus(`Experiment run failed: ${message}`);
@@ -115,6 +211,11 @@ export function Experiments(): JSX.Element {
       setRunning(false);
     }
   }
+
+  const liveRecVisible = useMemo(
+    () => latestRunDetail?.summary.mode === "single",
+    [latestRunDetail?.summary.mode],
+  );
 
   return (
     <div className="page-wrap">
@@ -255,8 +356,6 @@ export function Experiments(): JSX.Element {
               {running ? "Running…" : "Run experiment"}
             </button>
           </div>
-
-          {result ? <pre className="code-block">{JSON.stringify(result, null, 2)}</pre> : null}
         </article>
 
         <aside className="stack">
@@ -304,11 +403,40 @@ export function Experiments(): JSX.Element {
                 </Link>
               </div>
             ) : (
-              <p className="section-caption" style={{ marginTop: 10 }}>No run history available yet.</p>
+              <p className="section-caption" style={{ marginTop: 10 }}>
+                No run history available yet.
+              </p>
             )}
           </article>
         </aside>
       </section>
+
+      {latestRunDetail ? (
+        <RunResultView
+          detail={latestRunDetail}
+          rawSections={result ? [{ title: "Experiment run response", payload: result }] : []}
+        />
+      ) : (
+        <div className="empty-state">Run an experiment to see structured result visualization.</div>
+      )}
+
+      {liveRecVisible ? (
+        <section className="surface">
+          <h3 className="section-title">Single-user recommendation change (live snapshot)</h3>
+          <p className="section-caption">
+            Best-effort live comparison from current baseline and attacked recommendation endpoints.
+          </p>
+
+          {liveRecLoading ? <div className="loading-state" style={{ marginTop: 12 }}>Loading recommendations…</div> : null}
+          {liveRecError ? <div className="error-state" style={{ marginTop: 12 }}>{liveRecError}</div> : null}
+
+          {!liveRecLoading && !liveRecError && liveBaselineRecs.length > 0 && liveAttackedRecs.length > 0 ? (
+            <div style={{ marginTop: 12 }}>
+              <RecCompare baseline={liveBaselineRecs} attacked={liveAttackedRecs} />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }
