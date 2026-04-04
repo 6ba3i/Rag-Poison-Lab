@@ -1,87 +1,63 @@
-import { AnimatePresence, motion } from "framer-motion";
 import { useMemo, useState } from "react";
 
-import type { RecommendationItem, RecommendationMode } from "../api/types";
+import type { RecommendationItem } from "../api/types";
 
 interface RecCompareProps {
   baseline: RecommendationItem[];
   attacked: RecommendationItem[];
-  focusMode: RecommendationMode;
 }
 
-interface RecColumnProps {
-  title: string;
+interface ColumnProps {
+  label: string;
+  tone: "baseline" | "attacked";
   items: RecommendationItem[];
   otherIds: Set<number>;
-  focused: boolean;
-  columnKey: string;
 }
 
-function RecColumn({ title, items, otherIds, focused, columnKey }: RecColumnProps): JSX.Element {
+function RecColumn({ label, tone, items, otherIds }: ColumnProps): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   return (
-    <section
-      className={[
-        "panel p-4 transition-colors duration-150",
-        focused ? "border-slate-500" : "border-slate-700",
-      ].join(" ")}
-    >
-      <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-300">{title}</h3>
-      <div className="space-y-3">
-        {items.map((item) => {
+    <section className={["comparison-column", tone].join(" ")}>
+      <div className="status-row">
+        <h3 className="card-title">{label}</h3>
+        <span className={["badge", tone === "baseline" ? "primary" : "warning"].join(" ")}>{items.length} items</span>
+      </div>
+
+      <div className="rec-list" style={{ marginTop: 12 }}>
+        {items.map((item, index) => {
           const changed = !otherIds.has(item.movie_id);
-          const rowKey = `${columnKey}-${item.movie_id}`;
-          const isExpanded = expanded[rowKey] ?? false;
+          const key = `${tone}-${item.movie_id}`;
+          const isExpanded = expanded[key] ?? false;
 
           return (
-            <article
-              key={rowKey}
-              className={[
-                "rounded-xl border bg-slate-900/60 p-3",
-                changed ? "border-amber-500/70" : "border-slate-700",
-              ].join(" ")}
-            >
-              <div className="flex items-start justify-between gap-3">
+            <article key={key} className={["rec-item", changed ? "changed" : ""].join(" ")}>
+              <div className="rec-title-row">
                 <div>
-                  <h4 className="text-sm font-medium text-slate-100">{item.title}</h4>
-                  <p className="mt-1 text-xs text-slate-400">{item.genres.join(", ") || "No genres"}</p>
+                  <p className="rec-title">
+                    #{index + 1} {item.title}
+                  </p>
+                  <p className="rec-meta">{item.genres.join(", ") || "No genres"}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-xs text-slate-400">Score</p>
-                  <p className="text-sm font-semibold text-slate-200">{item.score.toFixed(3)}</p>
+                <div style={{ textAlign: "right" }}>
+                  <p className="text-meta">Score</p>
+                  <p style={{ margin: "4px 0 0", fontSize: 14, fontWeight: 600 }}>{item.score.toFixed(3)}</p>
                 </div>
               </div>
 
-              {changed ? (
-                <span className="mt-2 inline-block rounded-md border border-amber-500/70 px-2 py-1 text-xs text-amber-300">
-                  Changed item
-                </span>
-              ) : null}
-
-              <div className="mt-3">
+              <div className="inline-actions" style={{ marginTop: 10 }}>
+                {changed ? <span className="badge warning">Changed</span> : <span className="badge">Shared</span>}
                 <button
                   type="button"
-                  onClick={() => setExpanded((prev) => ({ ...prev, [rowKey]: !isExpanded }))}
-                  className="rounded-md border border-slate-600 px-2 py-1 text-xs text-slate-300 transition-colors duration-150 hover:border-slate-500 hover:text-slate-100"
+                  className="btn btn-ghost"
+                  style={{ height: 30, fontSize: 12 }}
+                  onClick={() => setExpanded((current) => ({ ...current, [key]: !isExpanded }))}
                 >
                   {isExpanded ? "Hide explanation" : "Show explanation"}
                 </button>
-                <AnimatePresence initial={false}>
-                  {isExpanded ? (
-                    <motion.div
-                      key="content"
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2, ease: "easeOut" }}
-                      className="overflow-hidden"
-                    >
-                      <p className="mt-2 text-xs leading-5 text-slate-300">{item.explanation}</p>
-                    </motion.div>
-                  ) : null}
-                </AnimatePresence>
               </div>
+
+              {isExpanded ? <p className="rec-explanation">{item.explanation}</p> : null}
             </article>
           );
         })}
@@ -90,26 +66,14 @@ function RecColumn({ title, items, otherIds, focused, columnKey }: RecColumnProp
   );
 }
 
-export function RecCompare({ baseline, attacked, focusMode }: RecCompareProps): JSX.Element {
+export function RecCompare({ baseline, attacked }: RecCompareProps): JSX.Element {
   const baselineIds = useMemo(() => new Set(baseline.map((item) => item.movie_id)), [baseline]);
   const attackedIds = useMemo(() => new Set(attacked.map((item) => item.movie_id)), [attacked]);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <RecColumn
-        title="Baseline"
-        items={baseline}
-        otherIds={attackedIds}
-        focused={focusMode === "baseline"}
-        columnKey="baseline"
-      />
-      <RecColumn
-        title="Attacked"
-        items={attacked}
-        otherIds={baselineIds}
-        focused={focusMode === "attacked"}
-        columnKey="attacked"
-      />
+    <div className="comparison-grid">
+      <RecColumn label="Baseline" tone="baseline" items={baseline} otherIds={attackedIds} />
+      <RecColumn label="Attacked" tone="attacked" items={attacked} otherIds={baselineIds} />
     </div>
   );
 }

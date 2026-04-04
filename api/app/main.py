@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.app.common.log import configure_logging
-from api.app.routers import experiments, health, recs, settings_llm, trace, users
+from api.app.routers import experiments, health, recs, results, settings_attack, settings_llm, trace, users
 from api.app.settings import Settings, get_settings
 
 configure_logging()
@@ -20,7 +20,9 @@ app.include_router(users.router, prefix="/api")
 app.include_router(recs.router, prefix="/api")
 app.include_router(trace.router, prefix="/api")
 app.include_router(settings_llm.router, prefix="/api")
+app.include_router(settings_attack.router, prefix="/api")
 app.include_router(experiments.router, prefix="/api")
+app.include_router(results.router, prefix="/api")
 if not any(
     getattr(route, "path", None) == "/api/experiments/run"
     and "POST" in (getattr(route, "methods", set()) or set())

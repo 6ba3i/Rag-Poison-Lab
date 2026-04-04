@@ -2,9 +2,12 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
-import { Dashboard } from "./pages/Dashboard";
+import { Experiments } from "./pages/Experiments";
+import { Overview } from "./pages/Overview";
+import { Results } from "./pages/Results";
 import { Settings } from "./pages/Settings";
-import { UserSelect } from "./pages/UserSelect";
+import { UserDetail } from "./pages/UserDetail";
+import { Users } from "./pages/Users";
 import "./styles/index.css";
 
 function App(): JSX.Element {
@@ -12,10 +15,15 @@ function App(): JSX.Element {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<UserSelect />} />
-          <Route path="users/:userId" element={<Dashboard />} />
+          <Route index element={<Navigate to="/overview" replace />} />
+          <Route path="overview" element={<Overview />} />
+          <Route path="experiments" element={<Experiments />} />
+          <Route path="users" element={<Users />} />
+          <Route path="users/:userId" element={<UserDetail />} />
+          <Route path="results" element={<Results />} />
           <Route path="settings" element={<Settings />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="dashboard/:userId" element={<UserDetail />} />
+          <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

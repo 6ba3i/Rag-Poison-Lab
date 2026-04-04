@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from common.schemas.attack_config import AttackType, TargetBoostField, TargetBoostPolicy
 from common.schemas.llm_config import LlmConfig, ProviderName, RankingMode
 
 RecommendationMode = Literal["baseline", "attacked"]
@@ -134,3 +135,66 @@ class ExperimentRunResponse(BaseModel):
     eval: dict[str, Any] | None = None
     report: dict[str, Any] | None = None
     run_dir: str | None = None
+
+
+class AttackSettingsResponse(BaseModel):
+    attack_type: AttackType
+    poison_fraction: float
+    target_movie_id: int | None = None
+    payload_text: str
+    keyword_list: list[str]
+    target_boost_policy: TargetBoostPolicy
+    target_boost_strength: int
+    target_fields: list[TargetBoostField]
+    config_path: str
+    config_exists: bool
+    config_sha256: str | None = None
+
+
+class RunSummary(BaseModel):
+    label: str
+    generated_at_utc: str | None = None
+    mode: str | None = None
+    k: int | None = None
+    requested_users: int | None = None
+    evaluated_users: int | None = None
+    skipped_users: int | None = None
+    target_movie_id: int | None = None
+    baseline: dict[str, float] = Field(default_factory=dict)
+    attacked: dict[str, float] = Field(default_factory=dict)
+    delta: dict[str, float] = Field(default_factory=dict)
+    warnings_count: int = 0
+    has_metrics: bool = False
+    has_manifest: bool = False
+    has_attack_trace: bool = False
+    has_summary: bool = False
+    has_delta_csv: bool = False
+
+
+class RunsListResponse(BaseModel):
+    items: list[RunSummary] = Field(default_factory=list)
+    next_cursor: str | None = None
+    total: int = 0
+
+
+class RunArtifacts(BaseModel):
+    run_dir: str
+    metrics_path: str | None = None
+    manifest_path: str | None = None
+    attack_trace_path: str | None = None
+    summary_path: str | None = None
+    delta_csv_path: str | None = None
+    llm_runtime_path: str | None = None
+    attack_runtime_path: str | None = None
+    llm_snapshot_path: str | None = None
+    attack_snapshot_path: str | None = None
+
+
+class RunDetailResponse(BaseModel):
+    summary: RunSummary
+    warnings: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = None
+    target_retrieval: dict[str, Any] | None = None
+    per_user: list[dict[str, Any]] = Field(default_factory=list)
+    manifest: dict[str, Any] | None = None
+    artifacts: RunArtifacts

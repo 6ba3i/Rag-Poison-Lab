@@ -9,35 +9,23 @@ interface LlmSelectorProps {
 
 interface StatusDescriptor {
   label: string;
-  className: string;
+  tone: "success" | "warning" | "danger";
 }
 
 function getStatus(value: LlmRoleConfig, option: LlmProviderOption | undefined): StatusDescriptor {
   if (!option) {
-    return {
-      label: "Missing key",
-      className: "border-rose-500/70 bg-rose-950/20 text-rose-300",
-    };
+    return { label: "Missing provider", tone: "danger" };
   }
 
   if (value.provider !== "local" && !option.available) {
-    return {
-      label: "Missing key",
-      className: "border-rose-500/70 bg-rose-950/20 text-rose-300",
-    };
+    return { label: "Missing API key", tone: "danger" };
   }
 
   if (value.provider === "local" && !option.models.includes(value.model)) {
-    return {
-      label: "Local model not installed",
-      className: "border-amber-500/70 bg-amber-950/20 text-amber-300",
-    };
+    return { label: "Local model unavailable", tone: "warning" };
   }
 
-  return {
-    label: "Ready",
-    className: "border-emerald-500/70 bg-emerald-950/20 text-emerald-300",
-  };
+  return { label: "Ready", tone: "success" };
 }
 
 export function LlmSelector({ roleLabel, value, providerOptions, onChange }: LlmSelectorProps): JSX.Element {
@@ -56,36 +44,31 @@ export function LlmSelector({ roleLabel, value, providerOptions, onChange }: Llm
   }
 
   return (
-    <section className="panel p-4">
-      <h3 className="text-base font-semibold text-slate-100">{roleLabel}</h3>
+    <section className="surface">
+      <div className="status-row">
+        <h3 className="card-title">{roleLabel}</h3>
+        <span className={["badge", status.tone].join(" ")}>{status.label}</span>
+      </div>
 
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <label className="flex flex-col gap-2 text-sm text-slate-300">
-          Provider
+      <div className="form-grid" style={{ marginTop: 16 }}>
+        <label className="field">
+          <span className="field-label">Provider</span>
           <select
             value={value.provider}
             onChange={(event) => handleProviderChange(event.target.value as ProviderName)}
-            className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 outline-none transition-colors duration-150 focus:border-slate-400"
+            className="select"
           >
             {providerOptions.map((option) => (
-              <option
-                key={option.provider}
-                value={option.provider}
-                disabled={option.provider !== "local" && !option.available}
-              >
+              <option key={option.provider} value={option.provider} disabled={option.provider !== "local" && !option.available}>
                 {option.provider}
               </option>
             ))}
           </select>
         </label>
 
-        <label className="flex flex-col gap-2 text-sm text-slate-300">
-          Model
-          <select
-            value={value.model}
-            onChange={(event) => onChange({ ...value, model: event.target.value })}
-            className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 outline-none transition-colors duration-150 focus:border-slate-400"
-          >
+        <label className="field">
+          <span className="field-label">Model</span>
+          <select value={value.model} onChange={(event) => onChange({ ...value, model: event.target.value })} className="select">
             {modelOptions.map((model) => (
               <option key={model} value={model}>
                 {model}
@@ -93,10 +76,6 @@ export function LlmSelector({ roleLabel, value, providerOptions, onChange }: Llm
             ))}
           </select>
         </label>
-      </div>
-
-      <div className="mt-4">
-        <span className={["rounded-md border px-2 py-1 text-xs", status.className].join(" ")}>{status.label}</span>
       </div>
     </section>
   );

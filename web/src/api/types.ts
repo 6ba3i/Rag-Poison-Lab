@@ -117,3 +117,70 @@ export interface ExperimentRunResponse {
   report?: Record<string, unknown> | null;
   run_dir?: string | null;
 }
+
+export type AttackType = "targeted_promotion" | "untargeted_degradation" | "prompt_injection";
+export type TargetBoostPolicy = "disabled" | "keyword_burst" | "aggressive";
+export type TargetBoostField = "title" | "genres" | "synopsis";
+
+export interface AttackSettingsResponse {
+  attack_type: AttackType;
+  poison_fraction: number;
+  target_movie_id: number | null;
+  payload_text: string;
+  keyword_list: string[];
+  target_boost_policy: TargetBoostPolicy;
+  target_boost_strength: number;
+  target_fields: TargetBoostField[];
+  config_path: string;
+  config_exists: boolean;
+  config_sha256: string | null;
+}
+
+export interface RunSummary {
+  label: string;
+  generated_at_utc: string | null;
+  mode: string | null;
+  k: number | null;
+  requested_users: number | null;
+  evaluated_users: number | null;
+  skipped_users: number | null;
+  target_movie_id: number | null;
+  baseline: Record<string, number>;
+  attacked: Record<string, number>;
+  delta: Record<string, number>;
+  warnings_count: number;
+  has_metrics: boolean;
+  has_manifest: boolean;
+  has_attack_trace: boolean;
+  has_summary: boolean;
+  has_delta_csv: boolean;
+}
+
+export interface RunsListResponse {
+  items: RunSummary[];
+  next_cursor: string | null;
+  total: number;
+}
+
+export interface RunArtifacts {
+  run_dir: string;
+  metrics_path: string | null;
+  manifest_path: string | null;
+  attack_trace_path: string | null;
+  summary_path: string | null;
+  delta_csv_path: string | null;
+  llm_runtime_path: string | null;
+  attack_runtime_path: string | null;
+  llm_snapshot_path: string | null;
+  attack_snapshot_path: string | null;
+}
+
+export interface RunDetailResponse {
+  summary: RunSummary;
+  warnings: string[];
+  metadata: Record<string, unknown> | null;
+  target_retrieval: Record<string, unknown> | null;
+  per_user: Record<string, unknown>[];
+  manifest: Record<string, unknown> | null;
+  artifacts: RunArtifacts;
+}

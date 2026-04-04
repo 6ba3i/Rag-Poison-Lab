@@ -1,4 +1,5 @@
 import {
+  type AttackSettingsResponse,
   type ExperimentRunRequest,
   type ExperimentRunResponse,
   type HistorySplit,
@@ -6,6 +7,8 @@ import {
   type LlmSettingsOptionsResponse,
   type RecommendationItem,
   type RecommendationMode,
+  type RunDetailResponse,
+  type RunsListResponse,
   type TraceResponse,
   type UserHistoryItem,
   type UserProfile,
@@ -101,4 +104,20 @@ export function runExperiment(payload: ExperimentRunRequest): Promise<Experiment
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function getAttackSettings(): Promise<AttackSettingsResponse> {
+  return apiRequest<AttackSettingsResponse>("/settings/attack");
+}
+
+export function listResultRuns(limit = 20, cursor: string | null = null): Promise<RunsListResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  return apiRequest<RunsListResponse>(`/results/runs?${params.toString()}`);
+}
+
+export function getResultRunDetail(label: string): Promise<RunDetailResponse> {
+  return apiRequest<RunDetailResponse>(`/results/runs/${encodeURIComponent(label)}`);
 }

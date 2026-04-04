@@ -1,9 +1,9 @@
 {
   "attacker": {
-    "model": "qwen2.5:1.5b",
-    "provider": "local"
+    "model": "gpt-4o",
+    "provider": "chatgpt"
   },
-  "ranking_mode": "llm_rerank",
+  "ranking_mode": "deterministic",
   "victim": {
     "model": "qwen2.5:1.5b",
     "provider": "local"
