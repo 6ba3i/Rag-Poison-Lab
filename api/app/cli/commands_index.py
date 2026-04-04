@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,7 @@ import typer
 
 from agent.datasets.poison_builder import ensure_poisoned_bulk_fresh
 from api.app.cli.commands_attack import build_poisoned
-from api.app.data.paths import ES_BULK_POISONED_MOVIES_JSONL, resolve_default_processed_dir
+from api.app.data.paths import ES_BULK_MOVIES_JSONL, ES_BULK_POISONED_MOVIES_JSONL, resolve_default_processed_dir
 from api.app.services.indexing_service import (
     get_index_stats,
     index_baseline_direct,
@@ -35,7 +36,11 @@ def _resolve_path(path: Path | None) -> Path | None:
 
 
 def index_baseline(*, es_url: str | None = None, processed_dir: Path | None = None) -> dict[str, Any]:
-    return index_baseline_direct(es_url=es_url, processed_dir=_resolve_path(processed_dir))
+    processed_path = _resolve_path(processed_dir)
+    provenance: dict[str, Any] = {}
+    if processed_path is not None:
+        provenance["source_bulk_path"] = str((processed_path / ES_BULK_MOVIES_JSONL).resolve())
+    return index_baseline_direct(es_url=es_url, processed_dir=processed_path, provenance=provenance)
 
 
 def index_poisoned(
@@ -54,9 +59,15 @@ def index_poisoned(
         # Backward-compatible behavior: callers using --build-if-missing
         # still get a harmless no-op path when the file is already fresh.
         _build_poisoned_if_missing(processed_dir=processed_path, attack_config=attack_config)
-    indexed = index_poisoned_direct(es_url=es_url, processed_dir=processed_path)
+    poisoned_meta = _read_poisoned_meta(processed_dir=processed_path)
+    indexed = index_poisoned_direct(
+        es_url=es_url,
+        processed_dir=processed_path,
+        provenance=_poisoned_index_provenance(poisoned_meta),
+    )
     return {
         "poisoned_bulk_refresh": refresh,
+        "poisoned_bulk_meta": poisoned_meta,
         "indexing": indexed,
     }
 
@@ -98,6 +109,43 @@ def _build_poisoned_if_missing(*, processed_dir: Path | None, attack_config: Pat
         return None
 
     return build_poisoned(processed_dir=resolved_processed_dir, attack_config=_resolve_path(attack_config))
+
+
+def _read_poisoned_meta(*, processed_dir: Path | None) -> dict[str, Any]:
+    resolved_processed_dir = processed_dir or resolve_default_processed_dir()
+    meta_path = resolved_processed_dir / "es_bulk_poisoned_movies.meta.json"
+    if not meta_path.exists() or meta_path.stat().st_size == 0:
+        return {"meta_path": str(meta_path), "available": False}
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return {"meta_path": str(meta_path), "available": False, "error": str(exc)}
+    if not isinstance(payload, dict):
+        return {"meta_path": str(meta_path), "available": False, "error": "meta payload is not an object"}
+    payload["meta_path"] = str(meta_path)
+    payload["available"] = True
+    return payload
+
+
+def _poisoned_index_provenance(meta: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "attack_type",
+        "poison_fraction",
+        "target_movie_id",
+        "attack_config_sha256",
+        "source_bulk_sha256",
+        "output_bulk_sha256",
+        "generated_at_utc",
+        "total_docs",
+        "poisoned_docs",
+    )
+    output: dict[str, Any] = {}
+    for key in keys:
+        if key in meta:
+            output[key] = meta[key]
+    if "meta_path" in meta:
+        output["poisoned_bulk_meta_path"] = meta["meta_path"]
+    return output
 
 
 @index_app.command("baseline")

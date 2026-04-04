@@ -359,8 +359,36 @@ def test_llm_options_secret_availability_and_no_secret_leak(backend_client: Test
     assert options["gemini"]["available"] is False
     assert options["qwen"]["available"] is False
 
+
+def test_experiment_orchestration_endpoint_accepts_noop_run(backend_client: TestClient) -> None:
+    response = backend_client.post(
+        "/api/experiments/run",
+        json={
+            "label": "noop_api_run",
+            "run_prepare": False,
+            "run_index": False,
+            "run_eval": False,
+            "run_report": False,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["label"] == "noop_api_run"
+    assert payload["prepare"] is None
+    assert payload["index"] is None
+    assert payload["eval"] is None
+    assert payload["report"] is None
+
     serialized = json.dumps(payload)
     assert "secret-chatgpt-key" not in serialized
+
+
+def test_experiment_route_registered() -> None:
+    assert any(
+        getattr(route, "path", None) == "/api/experiments/run"
+        and "POST" in (getattr(route, "methods", set()) or set())
+        for route in app.routes
+    )
 
 
 def test_spa_fallback_serves_index(backend_client: TestClient) -> None:

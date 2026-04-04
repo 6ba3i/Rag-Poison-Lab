@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from hashlib import sha256
 import logging
 from pathlib import Path
 import random
@@ -12,6 +13,7 @@ from api.app.eval.metrics import asr_at_k, hr_at_k, mean_metrics, metrics_delta,
 from api.app.llm.registry import LlmRegistry
 from api.app.services.recs_service import RecsService, load_llm_config, recommendation_retrieval_size
 from api.app.services.users_service import UsersService
+from api.app.services.indexing_service import get_index_provenance
 from api.app.settings import Settings, get_es_client, get_settings
 from common.schemas.attack_config import AttackConfig, load_attack_config
 from common.schemas.llm_config import LlmConfig
@@ -43,6 +45,8 @@ def run_experiments(
     settings: Settings | None = None,
     es_client: Any | None = None,
     results_root: Path | None = None,
+    allow_overwrite: bool = False,
+    attack_config_path: Path | None = None,
 ) -> dict[str, Any]:
     if k <= 0:
         raise ValueError("k must be >= 1")
@@ -73,7 +77,13 @@ def run_experiments(
         llm_registry=llm_registry,
     )
 
-    attack_config = load_attack_config((resolved_settings.resolved_config_dir / "attack_config.json").resolve())
+    resolved_attack_config_path = (
+        attack_config_path.resolve()
+        if attack_config_path is not None
+        else (resolved_settings.resolved_config_dir / "attack_config.json").resolve()
+    )
+    attack_config = load_attack_config(resolved_attack_config_path)
+    attack_config_sha256 = _hash_file(resolved_attack_config_path) if resolved_attack_config_path.exists() else None
     target_movie_id, eval_warnings, target_movie_source = _resolve_target_movie_id(
         attack_config=attack_config,
         users_service=users_service,
@@ -114,6 +124,11 @@ def run_experiments(
             target_movie_id=target_movie_id,
         )
     )
+    index_provenance, provenance_warnings = _resolve_eval_index_provenance(
+        es_client=resolved_es_client,
+        runtime_attack_config_sha256=attack_config_sha256,
+    )
+    eval_warnings.extend(provenance_warnings)
     asr_applicable = _is_asr_applicable(
         attack_type=attack_config.attack_type,
         target_movie_id=target_movie_id,
@@ -137,6 +152,16 @@ def run_experiments(
         target_movie_source,
         asr_applicable,
         json.dumps(attack_config_diagnostics, sort_keys=True),
+    )
+
+    run_label = _normalize_label(label) if label is not None else _default_run_label()
+    run_dir = resolve_run_dir(settings=resolved_settings, label=run_label, results_root=results_root)
+    _prepare_run_dir(run_dir=run_dir, allow_overwrite=allow_overwrite)
+    runtime_snapshot_paths = _write_runtime_config_snapshots(
+        run_dir=run_dir,
+        llm_config=llm_config,
+        attack_config=attack_config,
+        attack_config_sha256=attack_config_sha256,
     )
 
     per_user_rows: list[dict[str, Any]] = []
@@ -313,9 +338,6 @@ def run_experiments(
     delta_aggregate = _round_metrics(metrics_delta(baseline=baseline_aggregate, attacked=attacked_aggregate))
     target_retrieval_aggregate = _aggregate_target_retrieval(per_user_rows=per_user_rows, target_movie_id=target_movie_id)
 
-    run_label = _normalize_label(label) if label is not None else _default_run_label()
-    run_dir = resolve_run_dir(settings=resolved_settings, label=run_label, results_root=results_root)
-    run_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = run_dir / "metrics.json"
     if attack_trace_payload is not None:
         attack_trace_path = run_dir / "attack_trace.json"
@@ -335,6 +357,10 @@ def run_experiments(
             "asr_applicable": asr_applicable,
             "asr_applicable_reason": asr_applicable_reason,
             "attack_config_diagnostics": attack_config_diagnostics,
+            "attack_config_sha256": attack_config_sha256,
+            "attack_config_path": str(resolved_attack_config_path),
+            "index_provenance": index_provenance,
+            "runtime_snapshot_paths": runtime_snapshot_paths,
             "metric_keys": list(metric_keys),
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         },
@@ -351,6 +377,29 @@ def run_experiments(
         payload["attack_trace_path"] = str(attack_trace_path)
 
     metrics_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path = run_dir / "experiment_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "label": run_label,
+                "mode": mode,
+                "k": int(k),
+                "requested_users": len(selected_user_ids),
+                "evaluated_users": len(per_user_rows),
+                "skipped_users": len(skipped),
+                "attack_config_sha256": attack_config_sha256,
+                "attack_config_path": str(resolved_attack_config_path),
+                "index_provenance": index_provenance,
+                "runtime_snapshot_paths": runtime_snapshot_paths,
+                "metrics_path": str(metrics_path),
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     summary = {
         "label": run_label,
@@ -369,6 +418,11 @@ def run_experiments(
         "target_movie_source": target_movie_source,
         "asr_applicable": asr_applicable,
         "attack_config_diagnostics": attack_config_diagnostics,
+        "attack_config_sha256": attack_config_sha256,
+        "attack_config_path": str(resolved_attack_config_path),
+        "index_provenance": index_provenance,
+        "runtime_snapshot_paths": runtime_snapshot_paths,
+        "manifest_path": str(manifest_path),
         "metric_keys": list(metric_keys),
     }
     if eval_warnings:
@@ -393,6 +447,78 @@ def run_experiments(
 def resolve_run_dir(*, settings: Settings, label: str, results_root: Path | None = None) -> Path:
     base = results_root.resolve() if results_root is not None else (settings.resolved_data_root / "results" / "runs")
     return (base / label).resolve()
+
+
+def _prepare_run_dir(*, run_dir: Path, allow_overwrite: bool) -> None:
+    if run_dir.exists() and any(run_dir.iterdir()) and not allow_overwrite:
+        raise RuntimeError(
+            f"Run label '{run_dir.name}' already exists at {run_dir}. "
+            "Use a different label or pass overwrite=true to replace artifacts."
+        )
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _hash_file(path: Path) -> str:
+    return sha256(path.read_bytes()).hexdigest()
+
+
+def _write_runtime_config_snapshots(
+    *,
+    run_dir: Path,
+    llm_config: LlmConfig,
+    attack_config: AttackConfig,
+    attack_config_sha256: str | None,
+) -> dict[str, str]:
+    llm_path = run_dir / "llm_config.runtime.json"
+    attack_path = run_dir / "attack_config.runtime.json"
+    llm_path.write_text(json.dumps(llm_config.model_dump(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    attack_payload = attack_config.model_dump()
+    if attack_config_sha256 is not None:
+        attack_payload["sha256"] = attack_config_sha256
+    attack_path.write_text(json.dumps(attack_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "llm_config_runtime_path": str(llm_path),
+        "attack_config_runtime_path": str(attack_path),
+    }
+
+
+def _resolve_eval_index_provenance(
+    *,
+    es_client: Any,
+    runtime_attack_config_sha256: str | None,
+) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    output: dict[str, Any] = {}
+    for logical_index in ("movies", "movies_poisoned"):
+        try:
+            resolved = get_index_provenance(es_client=es_client, logical_index_name=logical_index)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(
+                f"index_provenance_lookup_failed index={logical_index} error={type(exc).__name__}: {exc}"
+            )
+            continue
+        if resolved is None:
+            warnings.append(f"index_provenance_unavailable index={logical_index}")
+            continue
+        output[logical_index] = resolved
+
+    attacked = output.get("movies_poisoned")
+    if isinstance(attacked, dict) and runtime_attack_config_sha256 is not None:
+        provenance = attacked.get("provenance")
+        if isinstance(provenance, dict):
+            indexed_attack_sha = provenance.get("attack_config_sha256")
+            if not isinstance(indexed_attack_sha, str) or indexed_attack_sha.strip() == "":
+                raise RuntimeError(
+                    "Attack provenance missing for movies_poisoned index. "
+                    "Reindex poisoned data via canonical indexing path before eval."
+                )
+            if indexed_attack_sha != runtime_attack_config_sha256:
+                raise RuntimeError(
+                    "Attack config/index provenance mismatch: runtime attack_config.json differs from "
+                    f"movies_poisoned indexed provenance (runtime={runtime_attack_config_sha256}, indexed={indexed_attack_sha}). "
+                    "Rebuild poisoned bulk and reindex before eval."
+                )
+    return output, warnings
 
 
 def _resolve_user_ids(

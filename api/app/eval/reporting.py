@@ -54,6 +54,7 @@ def generate_reports(
     _write_delta_csv(delta_csv_path, baseline=baseline, attacked=attacked, delta=delta)
     _snapshot_configs(
         settings=resolved_settings,
+        run_dir=resolved_run_dir,
         llm_snapshot_path=llm_snapshot_path,
         attack_snapshot_path=attack_snapshot_path,
     )
@@ -165,17 +166,26 @@ def _write_delta_csv(
 def _snapshot_configs(
     *,
     settings: Settings,
+    run_dir: Path,
     llm_snapshot_path: Path,
     attack_snapshot_path: Path,
 ) -> None:
-    llm_snapshot_path.write_text(
-        json.dumps(_load_llm_config_payload(settings), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    attack_snapshot_path.write_text(
-        json.dumps(_load_attack_config_payload(settings), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    runtime_llm_path = run_dir / "llm_config.runtime.json"
+    runtime_attack_path = run_dir / "attack_config.runtime.json"
+    if runtime_llm_path.exists() and runtime_llm_path.stat().st_size > 0:
+        llm_snapshot_path.write_text(runtime_llm_path.read_text(encoding="utf-8"), encoding="utf-8")
+    else:
+        llm_snapshot_path.write_text(
+            json.dumps(_load_llm_config_payload(settings), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if runtime_attack_path.exists() and runtime_attack_path.stat().st_size > 0:
+        attack_snapshot_path.write_text(runtime_attack_path.read_text(encoding="utf-8"), encoding="utf-8")
+    else:
+        attack_snapshot_path.write_text(
+            json.dumps(_load_attack_config_payload(settings), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _load_llm_config_payload(settings: Settings) -> dict[str, Any]:

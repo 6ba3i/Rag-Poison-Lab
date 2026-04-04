@@ -90,3 +90,30 @@ export interface LlmProviderOption {
 export interface LlmSettingsOptionsResponse {
   providers: LlmProviderOption[];
 }
+
+export interface ExperimentRunRequest {
+  label?: string | null;
+  mode?: "single" | "batch" | "full";
+  run_profile?: "pipeline" | "single_demo";
+  k?: number;
+  user_id?: number | null;
+  batch_size?: number;
+  run_prepare?: boolean | null;
+  run_index?: boolean | null;
+  run_eval?: boolean | null;
+  run_report?: boolean | null;
+  overwrite?: boolean;
+  dataset_dir?: string | null;
+  output_dir?: string | null;
+  es_url?: string | null;
+  attack_config?: string | null;
+}
+
+export interface ExperimentRunResponse {
+  label?: string | null;
+  prepare?: Record<string, unknown> | null;
+  index?: Record<string, unknown> | null;
+  eval?: Record<string, unknown> | null;
+  report?: Record<string, unknown> | null;
+  run_dir?: string | null;
+}

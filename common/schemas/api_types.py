@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -107,3 +107,30 @@ class LlmSettingsOptionsResponse(BaseModel):
 
 class LlmSettingsResponse(BaseModel):
     config: LlmConfig
+
+
+class ExperimentRunRequest(BaseModel):
+    label: str | None = None
+    mode: Literal["single", "batch", "full"] = "single"
+    run_profile: Literal["pipeline", "single_demo"] = "pipeline"
+    k: int = Field(default=10, ge=1, le=100)
+    user_id: int | None = Field(default=None, ge=1)
+    batch_size: int = Field(default=100, ge=1)
+    run_prepare: bool | None = None
+    run_index: bool | None = None
+    run_eval: bool | None = None
+    run_report: bool | None = None
+    overwrite: bool = False
+    dataset_dir: str | None = None
+    output_dir: str | None = None
+    es_url: str | None = None
+    attack_config: str | None = None
+
+
+class ExperimentRunResponse(BaseModel):
+    label: str | None = None
+    prepare: dict[str, Any] | None = None
+    index: dict[str, Any] | None = None
+    eval: dict[str, Any] | None = None
+    report: dict[str, Any] | None = None
+    run_dir: str | None = None

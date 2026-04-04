@@ -155,8 +155,7 @@ services:
           raise SystemExit("Elasticsearch did not reach yellow/green health")
         PY
         sh /workspace/docker/scripts/wait-for-es.sh
-        sh /workspace/docker/scripts/index_baseline.sh
-        sh /workspace/docker/scripts/index_poisoned.sh
+        python -m api.app.cli.cli index both --es-url http://elasticsearch:9200 --processed-dir /workspace/data/processed
     restart: "no"
 
 volumes:

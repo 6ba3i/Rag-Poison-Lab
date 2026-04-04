@@ -1,4 +1,6 @@
 import {
+  type ExperimentRunRequest,
+  type ExperimentRunResponse,
   type HistorySplit,
   type LlmConfig,
   type LlmSettingsOptionsResponse,
@@ -92,4 +94,11 @@ export function saveLlmSettings(config: LlmConfig): Promise<LlmConfig> {
 
 export function getLlmOptions(): Promise<LlmSettingsOptionsResponse> {
   return apiRequest<LlmSettingsOptionsResponse>("/settings/llm/options");
+}
+
+export function runExperiment(payload: ExperimentRunRequest): Promise<ExperimentRunResponse> {
+  return apiRequest<ExperimentRunResponse>("/experiments/run", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

@@ -16,13 +16,13 @@ from questionary import Choice
 
 from api.app.cli.commands_attack import build_poisoned
 from api.app.cli.commands_data import build_es_bulk, build_profiles, build_splits, prepare_data
-from api.app.cli.commands_eval import evaluate_run
 from api.app.cli.commands_index import index_baseline, index_both, index_poisoned, index_reset, index_stats
 from api.app.cli.commands_report import generate_report_artifacts
 from api.app.data.paths import ES_BULK_POISONED_MOVIES_JSONL, MOVIES_PARQUET, resolve_default_dataset_dir, resolve_default_processed_dir
 from api.app.eval.reporting import list_run_labels
 from api.app.llm.credentials import resolve_api_key
 from api.app.llm.registry import LlmRegistry
+from api.app.services.orchestration_service import ExperimentOrchestrator, ExperimentRunOptions
 from api.app.services.indexing_service import preflight_es
 from api.app.settings import Settings, get_settings
 from common.schemas.attack_config import AttackConfig, default_attack_config, load_attack_config
@@ -431,6 +431,7 @@ def _configure_attack_screen() -> None:
 
 
 def _run_experiments_screen() -> None:
+    orchestrator = ExperimentOrchestrator()
     while True:
         choice = _select(
             "Run experiments",
@@ -461,32 +462,65 @@ def _run_experiments_screen() -> None:
                     raise ValueError(f"Invalid user ID: {user_id_text}") from exc
                 if user_id_value <= 0:
                     raise ValueError("User ID must be >= 1")
-            summary = evaluate_run(
-                mode="single",
-                label=label,
-                k=k,
-                user_id=user_id_value,
-                batch_size=1,
-                results_root=None,
+            summary = orchestrator.run(
+                options=ExperimentRunOptions(
+                    label=label,
+                    mode="single",
+                    k=k,
+                    user_id=user_id_value,
+                    batch_size=1,
+                    run_profile="single_demo",
+                    run_prepare=None,
+                    run_index=None,
+                    run_eval=None,
+                    run_report=None,
+                    overwrite=False,
+                    dataset_dir=None,
+                    output_dir=None,
+                    es_url=None,
+                    attack_config=None,
+                )
             )
         elif choice == "batch":
             batch_size = _prompt_int("Batch size (N users)", 100, minimum=1)
-            summary = evaluate_run(
-                mode="batch",
-                label=label,
-                k=k,
-                user_id=None,
-                batch_size=batch_size,
-                results_root=None,
+            summary = orchestrator.run(
+                options=ExperimentRunOptions(
+                    label=label,
+                    mode="batch",
+                    k=k,
+                    user_id=None,
+                    batch_size=batch_size,
+                    run_profile="pipeline",
+                    run_prepare=False,
+                    run_index=False,
+                    run_eval=True,
+                    run_report=False,
+                    overwrite=False,
+                    dataset_dir=None,
+                    output_dir=None,
+                    es_url=None,
+                    attack_config=None,
+                )
             )
         else:
-            summary = evaluate_run(
-                mode="full",
-                label=label,
-                k=k,
-                user_id=None,
-                batch_size=1,
-                results_root=None,
+            summary = orchestrator.run(
+                options=ExperimentRunOptions(
+                    label=label,
+                    mode="full",
+                    k=k,
+                    user_id=None,
+                    batch_size=1,
+                    run_profile="pipeline",
+                    run_prepare=False,
+                    run_index=False,
+                    run_eval=True,
+                    run_report=False,
+                    overwrite=False,
+                    dataset_dir=None,
+                    output_dir=None,
+                    es_url=None,
+                    attack_config=None,
+                )
             )
 
         _print_summary(summary)
@@ -830,9 +864,15 @@ def _prompt_path(message: str, default_path: Path) -> Path:
     return Path(value or str(default_path)).resolve()
 
 
-def _prompt_int(message: str, default: int, minimum: int = 1) -> int:
+def _prompt_int(message: str, default: int, minimum: int = 1, maximum: int | None = None) -> int:
     raw = questionary.text(message, default=str(default)).ask()
     value = int(raw) if raw is not None and str(raw).strip() != "" else default
+    if maximum is not None and maximum < minimum:
+        raise ValueError(f"maximum must be >= minimum (minimum={minimum}, maximum={maximum})")
+    if maximum is not None:
+        if value < minimum or value > maximum:
+            raise ValueError(f"Value must be between {minimum} and {maximum}")
+        return value
     if value < minimum:
         raise ValueError(f"Value must be >= {minimum}")
     return value

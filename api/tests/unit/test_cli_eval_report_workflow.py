@@ -575,3 +575,121 @@ def test_eval_runner_rerank_preflight_reports_missing_local_model(monkeypatch, t
     assert "model=qwen2.5:1.5b" in message
     assert f"base_url={settings.ollama_base_url}" in message
     assert "Run: ollama pull qwen2.5:1.5b" in message
+
+
+def test_eval_runner_rejects_label_overwrite_by_default(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    runs_root = tmp_path / "runs"
+    run_experiments(
+        mode="single",
+        label="same_label",
+        user_id=1,
+        batch_size=1,
+        k=10,
+        settings=settings,
+        es_client=FakeElasticsearch(),
+        results_root=runs_root,
+    )
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        run_experiments(
+            mode="single",
+            label="same_label",
+            user_id=1,
+            batch_size=1,
+            k=10,
+            settings=settings,
+            es_client=FakeElasticsearch(),
+            results_root=runs_root,
+        )
+
+
+def test_reports_use_eval_runtime_snapshots_when_configs_change(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    runs_root = tmp_path / "runs"
+    summary = run_experiments(
+        mode="single",
+        label="snapshot_case",
+        user_id=1,
+        batch_size=1,
+        k=10,
+        settings=settings,
+        es_client=FakeElasticsearch(),
+        results_root=runs_root,
+    )
+    runtime_snapshot_paths = summary["runtime_snapshot_paths"]
+    runtime_attack_path = Path(runtime_snapshot_paths["attack_config_runtime_path"])
+    runtime_llm_path = Path(runtime_snapshot_paths["llm_config_runtime_path"])
+    assert runtime_attack_path.exists()
+    assert runtime_llm_path.exists()
+
+    settings.resolved_config_dir.joinpath("attack_config.json").write_text(
+        json.dumps(
+            {
+                "attack_type": "untargeted_degradation",
+                "poison_fraction": 0.99,
+                "target_movie_id": 99,
+                "payload_text": "CHANGED",
+                "keyword_list": ["changed"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    reports = generate_reports(label="snapshot_case", settings=settings, results_root=runs_root)
+    attack_snapshot_path = Path(reports["attack_config_snapshot_path"])
+    llm_snapshot_path = Path(reports["llm_config_snapshot_path"])
+    assert attack_snapshot_path.read_text(encoding="utf-8") == runtime_attack_path.read_text(encoding="utf-8")
+    assert llm_snapshot_path.read_text(encoding="utf-8") == runtime_llm_path.read_text(encoding="utf-8")
+
+
+def test_eval_runner_fails_on_attack_config_provenance_mismatch(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+
+    class ProvenanceEs(FakeElasticsearch):
+        class _Indices:
+            def __init__(self, wrong_sha: str) -> None:
+                self.wrong_sha = wrong_sha
+
+            def get_mapping(self, *, index: str) -> dict[str, object]:
+                if index == "movies_poisoned":
+                    return {
+                        "movies_poisoned__old": {
+                            "mappings": {
+                                "_meta": {
+                                    "ragpoison_provenance": {
+                                        "logical_index": "movies_poisoned",
+                                        "attack_config_sha256": self.wrong_sha,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                return {
+                    "movies__old": {
+                        "mappings": {
+                            "_meta": {"ragpoison_provenance": {"logical_index": "movies"}}
+                        }
+                    }
+                }
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.indices = self._Indices(wrong_sha="deadbeef")
+
+        def count(self, *, index: str, query: dict | None = None) -> dict[str, int]:
+            if index == "movies_poisoned" and query:
+                return {"count": 1}
+            return {"count": len(self._docs.get(index, []))}
+
+    with pytest.raises(RuntimeError, match="provenance mismatch"):
+        run_experiments(
+            mode="single",
+            label="provenance_mismatch",
+            user_id=1,
+            batch_size=1,
+            k=10,
+            settings=settings,
+            es_client=ProvenanceEs(),
+            results_root=tmp_path / "runs",
+        )

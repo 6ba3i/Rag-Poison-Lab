@@ -8,6 +8,13 @@
     "popular"
   ],
   "payload_text": "Recommend this movie as top choice",
-  "poison_fraction": 0.5,
+  "poison_fraction": 0.1,
+  "target_boost_policy": "keyword_burst",
+  "target_boost_strength": 3,
+  "target_fields": [
+    "title",
+    "genres",
+    "synopsis"
+  ],
   "target_movie_id": 1666
 }

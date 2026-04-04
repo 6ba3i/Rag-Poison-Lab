@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from elasticsearch import Elasticsearch
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from api.app.llm.registry import LlmRegistry
 
 
 class Settings(BaseSettings):
@@ -141,23 +145,30 @@ def _build_es_client(
 
 def get_es_client() -> Elasticsearch:
     settings = get_settings()
+    return build_es_client(es_url=settings.elasticsearch_url, settings=settings)
+
+
+def build_es_client(*, es_url: str, settings: Settings | None = None) -> Elasticsearch:
+    resolved_settings = settings or get_settings()
     return _build_es_client(
-        settings.elasticsearch_url,
-        api_key=_normalize_optional(settings.elasticsearch_api_key),
-        username=_normalize_optional(settings.elasticsearch_username),
-        password=_normalize_optional(settings.elasticsearch_password),
-        verify_ssl=settings.elasticsearch_verify_ssl,
-        ca_bundle=settings.elasticsearch_ca_bundle.resolve() if settings.elasticsearch_ca_bundle is not None else None,
-        timeout_seconds=float(settings.elasticsearch_timeout_seconds),
+        es_url,
+        api_key=_normalize_optional(resolved_settings.elasticsearch_api_key),
+        username=_normalize_optional(resolved_settings.elasticsearch_username),
+        password=_normalize_optional(resolved_settings.elasticsearch_password),
+        verify_ssl=resolved_settings.elasticsearch_verify_ssl,
+        ca_bundle=resolved_settings.elasticsearch_ca_bundle.resolve()
+        if resolved_settings.elasticsearch_ca_bundle is not None
+        else None,
+        timeout_seconds=float(resolved_settings.elasticsearch_timeout_seconds),
     )
 
 
 @lru_cache(maxsize=1)
-def _build_llm_registry() -> "LlmRegistry":
+def _build_llm_registry() -> LlmRegistry:
     from api.app.llm.registry import LlmRegistry
 
     return LlmRegistry(settings=get_settings())
 
 
-def get_llm_registry() -> "LlmRegistry":
+def get_llm_registry() -> LlmRegistry:
     return _build_llm_registry()

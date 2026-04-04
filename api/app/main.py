@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -7,10 +8,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.app.common.log import configure_logging
-from api.app.routers import health, recs, settings_llm, trace, users
+from api.app.routers import experiments, health, recs, settings_llm, trace, users
 from api.app.settings import Settings, get_settings
 
 configure_logging()
+logger = logging.getLogger(__name__)
 app = FastAPI(title="RAGPoison API")
 
 app.include_router(health.router, prefix="/api")
@@ -18,6 +20,14 @@ app.include_router(users.router, prefix="/api")
 app.include_router(recs.router, prefix="/api")
 app.include_router(trace.router, prefix="/api")
 app.include_router(settings_llm.router, prefix="/api")
+app.include_router(experiments.router, prefix="/api")
+if not any(
+    getattr(route, "path", None) == "/api/experiments/run"
+    and "POST" in (getattr(route, "methods", set()) or set())
+    for route in app.routes
+):
+    raise RuntimeError("Expected experiments orchestration route '/api/experiments/run' is not registered")
+logger.info("api_route_registered route=/api/experiments/run method=POST")
 
 assets_dir = get_settings().resolved_static_dir / "assets"
 if assets_dir.exists() and assets_dir.is_dir():

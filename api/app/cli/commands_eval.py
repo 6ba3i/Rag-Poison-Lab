@@ -7,6 +7,7 @@ import typer
 
 from api.app.eval.audit import generate_audit_artifacts
 from api.app.eval.runner import EvalMode, run_experiments
+from api.app.settings import Settings
 
 
 eval_app = typer.Typer(help="Evaluation commands")
@@ -29,6 +30,10 @@ def evaluate_run(
     user_id: int | None,
     batch_size: int,
     results_root: Path | None,
+    overwrite: bool,
+    settings: Settings | None = None,
+    es_client: Any | None = None,
+    attack_config: Path | None = None,
 ) -> dict[str, Any]:
     return run_experiments(
         mode=mode,
@@ -36,7 +41,11 @@ def evaluate_run(
         k=k,
         user_id=user_id,
         batch_size=batch_size,
+        settings=settings,
+        es_client=es_client,
         results_root=results_root.resolve() if results_root is not None else None,
+        allow_overwrite=overwrite,
+        attack_config_path=attack_config.resolve() if attack_config is not None else None,
     )
 
 
@@ -63,6 +72,8 @@ def eval_run(
     user_id: int | None = typer.Option(None, help="User ID when mode=single"),
     batch_size: int = typer.Option(100, min=1, help="Number of users when mode=batch"),
     results_root: Path | None = typer.Option(None, help="Override data/results/runs base path"),
+    attack_config: Path | None = typer.Option(None, help="Path to attack config JSON"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Allow overwriting an existing run label"),
 ) -> None:
     """Run baseline vs attacked evaluation and write metrics artifacts."""
 
@@ -74,6 +85,8 @@ def eval_run(
             user_id=user_id,
             batch_size=batch_size,
             results_root=results_root,
+            overwrite=overwrite,
+            attack_config=attack_config,
         )
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Evaluation failed: {exc}")
