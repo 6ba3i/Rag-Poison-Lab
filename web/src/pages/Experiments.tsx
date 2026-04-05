@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
@@ -7,7 +7,7 @@ import {
   getRecommendations,
   getResultRunDetail,
   listResultRuns,
-  runExperiment,
+  runExperimentStream,
 } from "../api/client";
 import type {
   AttackSettingsResponse,
@@ -51,6 +51,11 @@ export function Experiments(): JSX.Element {
   const [running, setRunning] = useState(false);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ExperimentRunResponse | null>(null);
+  const [runLogLines, setRunLogLines] = useState<string[]>([]);
+  const [showLogPanel, setShowLogPanel] = useState(false);
+  const [logCollapsed, setLogCollapsed] = useState(false);
+  const [logState, setLogState] = useState<"idle" | "running" | "completed" | "failed">("idle");
+  const logViewportRef = useRef<HTMLPreElement | null>(null);
 
   const [liveBaselineRecs, setLiveBaselineRecs] = useState<RecommendationItem[]>([]);
   const [liveAttackedRecs, setLiveAttackedRecs] = useState<RecommendationItem[]>([]);
@@ -159,6 +164,26 @@ export function Experiments(): JSX.Element {
     };
   }, [latestRunDetail]);
 
+  useEffect(() => {
+    if (!showLogPanel || logCollapsed) {
+      return;
+    }
+    const viewport = logViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [runLogLines, showLogPanel, logCollapsed]);
+
+  function appendLogLine(line: string): void {
+    setRunLogLines((current) => {
+      if (current.length >= 5000) {
+        return [...current.slice(-4999), line];
+      }
+      return [...current, line];
+    });
+  }
+
   async function handleRun(): Promise<void> {
     if (mode !== "single" && runProfile === "single_demo") {
       setRunStatus("single_demo profile is only valid for single mode.");
@@ -174,6 +199,10 @@ export function Experiments(): JSX.Element {
     setRunning(true);
     setRunStatus("Running orchestration workflow…");
     setResult(null);
+    setRunLogLines([]);
+    setShowLogPanel(true);
+    setLogCollapsed(false);
+    setLogState("running");
 
     const payload: ExperimentRunRequest = {
       label: label.trim() === "" ? null : label.trim(),
@@ -194,9 +223,23 @@ export function Experiments(): JSX.Element {
     };
 
     try {
-      const response = await runExperiment(payload);
+      const response = await runExperimentStream(payload, (event) => {
+        if (event.type === "log") {
+          appendLogLine(event.line);
+          return;
+        }
+
+        if (event.type === "failed") {
+          setLogState("failed");
+          appendLogLine(`ERROR: ${event.detail}`);
+          return;
+        }
+
+        setLogState("completed");
+      });
       setResult(response);
       setRunStatus("Experiment workflow completed.");
+      setLogState("completed");
 
       const runs = await listResultRuns(1);
       const latest = runs.items[0] ?? null;
@@ -207,6 +250,7 @@ export function Experiments(): JSX.Element {
     } catch (err) {
       const message = err instanceof ApiError ? err.detail : "Experiment run failed";
       setRunStatus(`Experiment run failed: ${message}`);
+      setLogState("failed");
     } finally {
       setRunning(false);
     }
@@ -418,6 +462,48 @@ export function Experiments(): JSX.Element {
         </aside>
       </section>
 
+      {showLogPanel ? (
+        <section className="surface run-log-panel">
+          <div className="run-log-header">
+            <div>
+              <h3 className="section-title">Live run logs</h3>
+              <p className="section-caption">Streaming the same runtime logger output used by the wizard run flow.</p>
+            </div>
+            <div className="inline-actions">
+              <span
+                className={[
+                  "badge",
+                  logState === "failed" ? "attack" : logState === "completed" ? "success" : "neutral",
+                ].join(" ")}
+              >
+                {logState === "running"
+                  ? "Running"
+                  : logState === "completed"
+                    ? "Completed"
+                    : logState === "failed"
+                      ? "Failed"
+                      : "Idle"}
+              </span>
+              <button type="button" className="btn btn-ghost" onClick={() => setLogCollapsed((current) => !current)}>
+                {logCollapsed ? "Show logs" : "Collapse logs"}
+              </button>
+            </div>
+          </div>
+
+          {logCollapsed ? (
+            <p className="section-caption" style={{ marginTop: 12 }}>
+              Logs are hidden. The run continues.
+            </p>
+          ) : (
+            <div className="run-log-body">
+              <pre ref={logViewportRef} className="run-log-box mono">
+                {runLogLines.length > 0 ? runLogLines.join("\n") : "Waiting for runtime logs..."}
+              </pre>
+            </div>
+          )}
+        </section>
+      ) : null}
+
       {latestRunDetail ? (
         <RunResultView
           detail={latestRunDetail}
@@ -431,7 +517,10 @@ export function Experiments(): JSX.Element {
         <section className="surface">
           <h3 className="section-title">Single-user recommendation change (live snapshot)</h3>
           <p className="section-caption">
-            Best-effort live comparison from current baseline and attacked recommendation endpoints.
+            Recomputed live from current recommendation endpoints. This is not a playback of the run artifact snapshot.
+          </p>
+          <p className="section-caption">
+            It can differ from stored run metrics/traces because endpoint defaults and current runtime state may not match eval-time settings.
           </p>
 
           {liveRecLoading ? <div className="loading-state" style={{ marginTop: 12 }}>Loading recommendations…</div> : null}

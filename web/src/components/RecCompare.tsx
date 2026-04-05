@@ -27,6 +27,11 @@ function RecColumn({ label, tone, items, otherIds }: ColumnProps): JSX.Element {
       <div className="rec-list" style={{ marginTop: 12 }}>
         {items.map((item, index) => {
           const changed = !otherIds.has(item.movie_id);
+          const membershipLabel = changed
+            ? tone === "baseline"
+              ? "Only in baseline"
+              : "Only in attacked"
+            : "In both";
           const key = `${tone}-${item.movie_id}`;
           const isExpanded = expanded[key] ?? false;
 
@@ -45,7 +50,7 @@ function RecColumn({ label, tone, items, otherIds }: ColumnProps): JSX.Element {
               </div>
 
               <div className="inline-actions" style={{ marginTop: 10 }}>
-                {changed ? <span className="badge warning mono">Changed</span> : <span className="badge neutral mono">Shared</span>}
+                {changed ? <span className="badge warning mono">{membershipLabel}</span> : <span className="badge neutral mono">{membershipLabel}</span>}
                 <button
                   type="button"
                   className="btn btn-secondary"

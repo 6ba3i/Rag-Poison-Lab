@@ -137,9 +137,9 @@ export function UserDetail(): JSX.Element {
             <div className="status-row" style={{ marginBottom: 12 }}>
               <div>
                 <h3 className="section-title">Recommendation comparison</h3>
-                <p className="section-caption">Primary analysis surface showing ranking shifts and changed items.</p>
+                <p className="section-caption">Primary analysis surface showing ranking shifts and cross-list membership differences.</p>
               </div>
-              <span className="badge warning">Changed items are highlighted in amber</span>
+              <span className="badge warning">Items appearing only on one side are highlighted in amber</span>
             </div>
             <RecCompare baseline={baselineRecs} attacked={attackedRecs} />
           </section>

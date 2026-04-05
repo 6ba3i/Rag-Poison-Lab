@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -484,6 +485,60 @@ def test_experiment_orchestration_endpoint_accepts_noop_run(backend_client: Test
 
     serialized = json.dumps(payload)
     assert "secret-chatgpt-key" not in serialized
+
+
+def test_experiment_orchestration_stream_endpoint_emits_live_logs_and_complete(
+    backend_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _StreamingOrchestrator:
+        def run(self, *, options) -> dict[str, object]:
+            logger = logging.getLogger("api.app.eval.runner")
+            logger.info("eval_run_start mode=%s label=%s", options.mode, options.label)
+            logger.info("eval_user_result user_id=%s", 13)
+            return {
+                "label": options.label,
+                "prepare": None,
+                "index": None,
+                "eval": {"mode": options.mode},
+                "report": None,
+                "run_dir": None,
+            }
+
+    monkeypatch.setattr("api.app.routers.experiments.ExperimentOrchestrator", _StreamingOrchestrator)
+
+    response = backend_client.post(
+        "/api/experiments/run/stream",
+        json={"label": "stream_ok", "mode": "single", "run_profile": "single_demo", "run_prepare": False, "run_index": False},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: log" in response.text
+    assert "eval_run_start mode=single label=stream_ok" in response.text
+    assert "event: complete" in response.text
+    assert '"label": "stream_ok"' in response.text
+
+
+def test_experiment_orchestration_stream_endpoint_emits_failed_event(
+    backend_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FailingOrchestrator:
+        def run(self, *, options) -> dict[str, object]:
+            logger = logging.getLogger("api.app.eval.runner")
+            logger.info("eval_run_start mode=%s label=%s", options.mode, options.label)
+            raise RuntimeError("simulated stream failure")
+
+    monkeypatch.setattr("api.app.routers.experiments.ExperimentOrchestrator", _FailingOrchestrator)
+
+    response = backend_client.post(
+        "/api/experiments/run/stream",
+        json={"label": "stream_fail", "mode": "single", "run_profile": "single_demo", "run_prepare": False},
+    )
+    assert response.status_code == 200
+    assert "event: failed" in response.text
+    assert '"status_code": 409' in response.text
+    assert "simulated stream failure" in response.text
 
 
 def test_experiment_route_registered() -> None:

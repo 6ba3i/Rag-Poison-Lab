@@ -535,6 +535,37 @@ textarea {
   color: var(--text-secondary);
 }
 
+.run-log-panel {
+  padding: 18px;
+}
+
+.run-log-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-log-body {
+  margin-top: 12px;
+}
+
+.run-log-box {
+  margin: 0;
+  min-height: 124px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .run-interpretation {
   margin: 12px 0 0;
   padding: 10px 14px;
