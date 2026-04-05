@@ -12,9 +12,9 @@ from agent.datasets.bulk_writer import read_bulk_movies, write_poisoned_bulk
 from api.app.data.paths import (
     ES_BULK_MOVIES_JSONL,
     ES_BULK_POISONED_MOVIES_JSONL,
-    REPO_ROOT,
     resolve_output_dir,
 )
+from api.app.settings import get_settings
 from common.schemas.attack_config import load_attack_config
 
 POISONED_BULK_META_JSON = "es_bulk_poisoned_movies.meta.json"
@@ -173,7 +173,7 @@ def ensure_poisoned_bulk_fresh(
 def _resolve_attack_config_path(attack_config_path: Path | None) -> Path:
     if attack_config_path is not None:
         return attack_config_path.resolve()
-    return (REPO_ROOT / "data" / "config" / "attack_config.json").resolve()
+    return (get_settings().resolved_config_dir / "attack_config.json").resolve()
 
 
 def _poisoned_bulk_status_reason(
@@ -194,6 +194,8 @@ def _poisoned_bulk_status_reason(
         return "attack_config_changed"
     if metadata.get("source_bulk_sha256") != _hash_file(source_path):
         return "source_bulk_changed"
+    if metadata.get("output_bulk_sha256") != _hash_file(output_path):
+        return "output_bulk_changed"
     return "up_to_date"
 
 

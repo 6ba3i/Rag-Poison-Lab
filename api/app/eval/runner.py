@@ -6,9 +6,11 @@ from hashlib import sha256
 import logging
 from pathlib import Path
 import random
+import shutil
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from api.app.data.paths import ES_BULK_MOVIES_JSONL, ES_BULK_POISONED_MOVIES_JSONL
 from api.app.eval.metrics import asr_at_k, hr_at_k, mean_metrics, metrics_delta, mrr_at_k, ndcg_at_k
 from api.app.llm.registry import LlmRegistry
 from api.app.services.recs_service import RecsService, load_llm_config, recommendation_retrieval_size
@@ -127,6 +129,7 @@ def run_experiments(
     index_provenance, provenance_warnings = _resolve_eval_index_provenance(
         es_client=resolved_es_client,
         runtime_attack_config_sha256=attack_config_sha256,
+        processed_dir=resolved_settings.resolved_processed_dir,
     )
     eval_warnings.extend(provenance_warnings)
     asr_applicable = _is_asr_applicable(
@@ -450,11 +453,13 @@ def resolve_run_dir(*, settings: Settings, label: str, results_root: Path | None
 
 
 def _prepare_run_dir(*, run_dir: Path, allow_overwrite: bool) -> None:
-    if run_dir.exists() and any(run_dir.iterdir()) and not allow_overwrite:
-        raise RuntimeError(
-            f"Run label '{run_dir.name}' already exists at {run_dir}. "
-            "Use a different label or pass overwrite=true to replace artifacts."
-        )
+    if run_dir.exists() and any(run_dir.iterdir()):
+        if not allow_overwrite:
+            raise RuntimeError(
+                f"Run label '{run_dir.name}' already exists at {run_dir}. "
+                "Use a different label or pass overwrite=true to replace artifacts."
+            )
+        shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -486,6 +491,7 @@ def _resolve_eval_index_provenance(
     *,
     es_client: Any,
     runtime_attack_config_sha256: str | None,
+    processed_dir: Path,
 ) -> tuple[dict[str, Any], list[str]]:
     warnings: list[str] = []
     output: dict[str, Any] = {}
@@ -518,6 +524,36 @@ def _resolve_eval_index_provenance(
                     f"movies_poisoned indexed provenance (runtime={runtime_attack_config_sha256}, indexed={indexed_attack_sha}). "
                     "Rebuild poisoned bulk and reindex before eval."
                 )
+
+    for logical_index, bulk_name in (
+        ("movies", ES_BULK_MOVIES_JSONL),
+        ("movies_poisoned", ES_BULK_POISONED_MOVIES_JSONL),
+    ):
+        resolved = output.get(logical_index)
+        if not isinstance(resolved, dict):
+            continue
+        provenance = resolved.get("provenance")
+        if not isinstance(provenance, dict):
+            continue
+        indexed_bulk_sha = provenance.get("bulk_sha256")
+        if not isinstance(indexed_bulk_sha, str) or indexed_bulk_sha.strip() == "":
+            warnings.append(f"index_provenance_missing_bulk_sha index={logical_index}")
+            continue
+
+        bulk_path = (processed_dir / bulk_name).resolve()
+        if not bulk_path.exists() or bulk_path.stat().st_size == 0:
+            warnings.append(
+                f"processed_bulk_unavailable_for_provenance_check index={logical_index} path={bulk_path}"
+            )
+            continue
+
+        runtime_bulk_sha = _hash_file(bulk_path)
+        if runtime_bulk_sha != indexed_bulk_sha:
+            raise RuntimeError(
+                f"Processed data/index provenance mismatch for {logical_index}: "
+                f"processed bulk sha256 ({runtime_bulk_sha}) differs from indexed provenance ({indexed_bulk_sha}). "
+                "Reindex before running eval."
+            )
     return output, warnings
 
 

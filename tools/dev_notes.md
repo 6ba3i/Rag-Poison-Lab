@@ -59,10 +59,10 @@ docker compose -f docker/docker-compose.yml --profile indexing run --rm indexer
 CLI path (reproducible local flow):
 
 ```bash
-uv run python -m api.app.cli.cli data prepare
-uv run python -m api.app.cli.cli attack build-poisoned
-uv run python -m api.app.cli.cli index both
-uv run python -m api.app.cli.cli eval run --mode full --label <run_label>
+uv run --project api python -m api.app.cli.cli data prepare
+uv run --project api python -m api.app.cli.cli attack build-poisoned
+uv run --project api python -m api.app.cli.cli index both
+uv run --project api python -m api.app.cli.cli eval run --mode full --label <run_label>
 ```
 
 Evaluation artifacts are written under:
