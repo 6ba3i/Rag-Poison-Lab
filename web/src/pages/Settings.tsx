@@ -64,6 +64,16 @@ export function Settings(): JSX.Element {
     setSaveStatus(null);
   }
 
+  function updateRetrievalMode(retrievalMode: LlmConfig["retrieval_mode"]): void {
+    setDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      return { ...current, retrieval_mode: retrievalMode };
+    });
+    setSaveStatus(null);
+  }
+
   async function onSave(): Promise<void> {
     if (!draft) {
       return;
@@ -115,7 +125,12 @@ export function Settings(): JSX.Element {
             onChange={(value) => updateRole("attacker", value)}
           />
 
-          <SettingsPanel rankingMode={draft.ranking_mode} onRankingModeChange={updateRankingMode} />
+          <SettingsPanel
+            rankingMode={draft.ranking_mode}
+            retrievalMode={draft.retrieval_mode}
+            onRankingModeChange={updateRankingMode}
+            onRetrievalModeChange={updateRetrievalMode}
+          />
 
           <section className="surface">
             <div className="status-row">

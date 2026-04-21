@@ -11,13 +11,28 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from api.app.data.paths import ES_BULK_MOVIES_JSONL, ES_BULK_POISONED_MOVIES_JSONL
-from api.app.eval.metrics import asr_at_k, hr_at_k, mean_metrics, metrics_delta, mrr_at_k, ndcg_at_k
+from api.app.eval.metrics import (
+    asr_at_k,
+    hr_at_k,
+    mean_metrics,
+    metric_stats,
+    metrics_delta,
+    mrr_at_k,
+    ndcg_at_k,
+    paired_significance,
+)
 from api.app.llm.registry import LlmRegistry
-from api.app.services.recs_service import RecsService, load_llm_config, recommendation_retrieval_size
+from api.app.services.recs_service import (
+    RecsService,
+    load_defense_runtime_config,
+    load_llm_config,
+    recommendation_retrieval_size,
+)
 from api.app.services.users_service import UsersService
 from api.app.services.indexing_service import get_index_provenance
 from api.app.settings import Settings, get_es_client, get_settings
 from common.schemas.attack_config import AttackConfig, load_attack_config
+from common.schemas.defense_config import DefenseConfig
 from common.schemas.llm_config import LlmConfig
 from rag.recsys.candidate_gen import (
     build_es_query,
@@ -49,20 +64,44 @@ def run_experiments(
     results_root: Path | None = None,
     allow_overwrite: bool = False,
     attack_config_path: Path | None = None,
+    repeat_count: int = 1,
+    seed: int = 42,
 ) -> dict[str, Any]:
     if k <= 0:
         raise ValueError("k must be >= 1")
     if batch_size <= 0:
         raise ValueError("batch_size must be >= 1")
+    if repeat_count <= 0:
+        raise ValueError("repeat_count must be >= 1")
+    if seed < 0:
+        raise ValueError("seed must be >= 0")
 
     logger.info(
-        "eval_run_start mode=%s label=%s k=%s user_id=%s batch_size=%s",
+        "eval_run_start mode=%s label=%s k=%s user_id=%s batch_size=%s repeat_count=%s seed=%s",
         mode,
         label,
         k,
         user_id,
         batch_size,
+        repeat_count,
+        seed,
     )
+
+    if repeat_count > 1:
+        return _run_repeated_experiments(
+            mode=mode,
+            label=label,
+            k=k,
+            user_id=user_id,
+            batch_size=batch_size,
+            settings=settings,
+            es_client=es_client,
+            results_root=results_root,
+            allow_overwrite=allow_overwrite,
+            attack_config_path=attack_config_path,
+            repeat_count=repeat_count,
+            seed=seed,
+        )
 
     resolved_settings = settings or get_settings()
     resolved_es_client = es_client if es_client is not None else get_es_client()
@@ -82,10 +121,13 @@ def run_experiments(
     resolved_attack_config_path = (
         attack_config_path.resolve()
         if attack_config_path is not None
-        else (resolved_settings.resolved_config_dir / "attack_config.json").resolve()
+        else resolved_settings.resolved_attack_config_path
     )
     attack_config = load_attack_config(resolved_attack_config_path)
     attack_config_sha256 = _hash_file(resolved_attack_config_path) if resolved_attack_config_path.exists() else None
+    defense_config = load_defense_runtime_config(settings=resolved_settings)
+    defense_config_path = resolved_settings.resolved_defense_config_path
+    defense_config_sha256 = _hash_file(defense_config_path) if defense_config_path.exists() and defense_config_path.stat().st_size > 0 else None
     target_movie_id, eval_warnings, target_movie_source = _resolve_target_movie_id(
         attack_config=attack_config,
         users_service=users_service,
@@ -95,6 +137,8 @@ def run_experiments(
         mode=mode,
         user_id=user_id,
         batch_size=batch_size,
+        repeat_count=repeat_count,
+        seed=seed,
     )
     if mode == "single":
         resolved_user_id, target_movie_id, target_movie_source, single_case_warnings = _resolve_single_eval_case(
@@ -165,6 +209,8 @@ def run_experiments(
         llm_config=llm_config,
         attack_config=attack_config,
         attack_config_sha256=attack_config_sha256,
+        defense_config=defense_config,
+        defense_config_sha256=defense_config_sha256,
     )
 
     per_user_rows: list[dict[str, Any]] = []
@@ -193,18 +239,34 @@ def run_experiments(
                 seen_history_split="train",
                 strict_retrieval=True,
             )
+            defended_result = (
+                recs_service.recommend_with_debug(
+                    user_id=current_user_id,
+                    mode="attacked",
+                    k=k,
+                    seen_history_split="train",
+                    strict_retrieval=True,
+                    defense_config_override=defense_config,
+                )
+                if defense_config.enabled
+                else None
+            )
             baseline = baseline_result["items"]
             attacked = attacked_result["items"]
+            defended = defended_result["items"] if defended_result is not None else None
         except Exception as exc:  # noqa: BLE001
             skipped.append({"user_id": current_user_id, "reason": f"recommendation_error: {exc}"})
             continue
 
         baseline_ids = _extract_movie_ids(baseline)
         attacked_ids = _extract_movie_ids(attacked)
+        defended_ids = _extract_movie_ids(defended or [])
         baseline_debug = baseline_result.get("debug")
         attacked_debug = attacked_result.get("debug")
+        defended_debug = defended_result.get("debug") if defended_result is not None else None
         baseline_retrieval_ids = _extract_debug_movie_ids(baseline_debug, key="retrieved_from_es_movie_ids")
         attacked_retrieval_ids = _extract_debug_movie_ids(attacked_debug, key="retrieved_from_es_movie_ids")
+        defended_retrieval_ids = _extract_debug_movie_ids(defended_debug, key="retrieved_from_es_movie_ids")
 
         baseline_hits = _relevant_hits_at_k(recommended=baseline_ids, relevant=relevant, k=k)
         attacked_hits = _relevant_hits_at_k(recommended=attacked_ids, relevant=relevant, k=k)
@@ -219,9 +281,20 @@ def run_experiments(
             "ndcg": ndcg_at_k(attacked_ids, relevant, k),
             "mrr": mrr_at_k(attacked_ids, relevant, k),
         }
+        defended_metrics = (
+            {
+                "hr": hr_at_k(defended_ids, relevant, k),
+                "ndcg": ndcg_at_k(defended_ids, relevant, k),
+                "mrr": mrr_at_k(defended_ids, relevant, k),
+            }
+            if defended is not None
+            else None
+        )
         if asr_applicable:
             baseline_metrics[ASR_METRIC_KEY] = asr_at_k(baseline_ids, target_movie_id, k)
             attacked_metrics[ASR_METRIC_KEY] = asr_at_k(attacked_ids, target_movie_id, k)
+            if defended_metrics is not None:
+                defended_metrics[ASR_METRIC_KEY] = asr_at_k(defended_ids, target_movie_id, k)
 
         overlap = _candidate_overlap_at_k(baseline_ids=baseline_ids, attacked_ids=attacked_ids, k=k)
         target_rank_baseline = _rank_of_target(recommended=baseline_ids, target_movie_id=target_movie_id, k=k)
@@ -240,13 +313,21 @@ def run_experiments(
             target_movie_id=target_movie_id,
             k=len(attacked_retrieval_ids),
         )
+        target_retrieval_rank_defended = _rank_of_target(
+            recommended=defended_retrieval_ids,
+            target_movie_id=target_movie_id,
+            k=len(defended_retrieval_ids),
+        )
         target_retrieval_rank_lift = _target_rank_lift(
             baseline_rank=target_retrieval_rank_baseline,
             attacked_rank=target_retrieval_rank_attacked,
         )
+        defense_target_retrieval_rank_lift = _target_rank_lift(
+            baseline_rank=target_retrieval_rank_attacked,
+            attacked_rank=target_retrieval_rank_defended,
+        )
 
-        per_user_rows.append(
-            {
+        row = {
                 "user_id": current_user_id,
                 "relevant_test_count": len(relevant),
                 "baseline_relevant_hits_at_k": baseline_hits,
@@ -264,7 +345,13 @@ def run_experiments(
                 "attacked": _round_metrics(attacked_metrics),
                 "delta": _round_metrics(metrics_delta(baseline=baseline_metrics, attacked=attacked_metrics)),
             }
-        )
+        if defended_metrics is not None:
+            row["defended"] = _round_metrics(defended_metrics)
+            row["defense_delta"] = _round_metrics(metrics_delta(baseline=attacked_metrics, attacked=defended_metrics))
+            row["target_in_retrieval_defended"] = bool(target_retrieval_rank_defended is not None)
+            row["target_retrieval_rank_defended"] = target_retrieval_rank_defended
+            row["target_retrieval_defense_lift"] = defense_target_retrieval_rank_lift
+        per_user_rows.append(row)
 
         logger.info(
             "eval_user_result user_id=%s mode=%s attack_type=%s relevant_test_count=%s baseline_hits_at_k=%s attacked_hits_at_k=%s overlap_at_k=%.6f target_rank_baseline=%s target_rank_attacked=%s target_retrieval_rank_baseline=%s target_retrieval_rank_attacked=%s",
@@ -305,14 +392,21 @@ def run_experiments(
                 "relevant_test_movie_ids": sorted(int(item) for item in relevant),
                 "baseline_debug": baseline_debug,
                 "attacked_debug": attacked_debug,
+                "defended_debug": defended_debug,
                 "metrics_input": {
                     "baseline_ids": baseline_ids,
                     "attacked_ids": attacked_ids,
+                    "defended_ids": defended_ids,
                     "baseline_retrieval_ids": baseline_retrieval_ids,
                     "attacked_retrieval_ids": attacked_retrieval_ids,
+                    "defended_retrieval_ids": defended_retrieval_ids,
                     "baseline_metrics": _round_metrics(baseline_metrics),
                     "attacked_metrics": _round_metrics(attacked_metrics),
                     "delta_metrics": _round_metrics(metrics_delta(baseline=baseline_metrics, attacked=attacked_metrics)),
+                    "defended_metrics": _round_metrics(defended_metrics) if defended_metrics is not None else None,
+                    "defense_delta_metrics": _round_metrics(metrics_delta(baseline=attacked_metrics, attacked=defended_metrics))
+                    if defended_metrics is not None
+                    else None,
                     "candidate_overlap_at_k": round(overlap, 6),
                     "baseline_relevant_hits_at_k": baseline_hits,
                     "attacked_relevant_hits_at_k": attacked_hits,
@@ -322,6 +416,8 @@ def run_experiments(
                     "target_retrieval_rank_baseline": target_retrieval_rank_baseline,
                     "target_retrieval_rank_attacked": target_retrieval_rank_attacked,
                     "target_retrieval_rank_lift": target_retrieval_rank_lift,
+                    "target_retrieval_rank_defended": target_retrieval_rank_defended,
+                    "target_retrieval_defense_lift": defense_target_retrieval_rank_lift,
                 },
             }
 
@@ -340,6 +436,16 @@ def run_experiments(
     )
     delta_aggregate = _round_metrics(metrics_delta(baseline=baseline_aggregate, attacked=attacked_aggregate))
     target_retrieval_aggregate = _aggregate_target_retrieval(per_user_rows=per_user_rows, target_movie_id=target_movie_id)
+    defended_aggregate = (
+        _round_metrics(mean_metrics([row["defended"] for row in per_user_rows if isinstance(row.get("defended"), dict)], metric_keys))
+        if defense_config.enabled and any(isinstance(row.get("defended"), dict) for row in per_user_rows)
+        else None
+    )
+    defense_delta_aggregate = (
+        _round_metrics(metrics_delta(baseline=attacked_aggregate, attacked=defended_aggregate))
+        if isinstance(defended_aggregate, dict)
+        else None
+    )
 
     metrics_path = run_dir / "metrics.json"
     if attack_trace_payload is not None:
@@ -362,10 +468,16 @@ def run_experiments(
             "attack_config_diagnostics": attack_config_diagnostics,
             "attack_config_sha256": attack_config_sha256,
             "attack_config_path": str(resolved_attack_config_path),
+            "defense_enabled": defense_config.enabled,
+            "defense_config": defense_config.model_dump(),
+            "defense_config_sha256": defense_config_sha256,
+            "defense_config_path": str(defense_config_path),
             "index_provenance": index_provenance,
             "runtime_snapshot_paths": runtime_snapshot_paths,
             "metric_keys": list(metric_keys),
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "repeat_count": repeat_count,
+            "seed": seed,
         },
         "baseline": baseline_aggregate,
         "attacked": attacked_aggregate,
@@ -374,6 +486,9 @@ def run_experiments(
         "per_user": per_user_rows,
         "skipped": skipped,
     }
+    if defended_aggregate is not None:
+        payload["defended"] = defended_aggregate
+        payload["defense_delta"] = defense_delta_aggregate
     if eval_warnings:
         payload["warnings"] = list(eval_warnings)
     if attack_trace_path is not None:
@@ -392,10 +507,14 @@ def run_experiments(
                 "skipped_users": len(skipped),
                 "attack_config_sha256": attack_config_sha256,
                 "attack_config_path": str(resolved_attack_config_path),
+                "defense_config_sha256": defense_config_sha256,
+                "defense_config_path": str(defense_config_path),
                 "index_provenance": index_provenance,
                 "runtime_snapshot_paths": runtime_snapshot_paths,
                 "metrics_path": str(metrics_path),
                 "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "repeat_count": repeat_count,
+                "seed": seed,
             },
             indent=2,
             sort_keys=True,
@@ -423,11 +542,19 @@ def run_experiments(
         "attack_config_diagnostics": attack_config_diagnostics,
         "attack_config_sha256": attack_config_sha256,
         "attack_config_path": str(resolved_attack_config_path),
+        "defense_config_sha256": defense_config_sha256,
+        "defense_config_path": str(defense_config_path),
+        "defense_enabled": defense_config.enabled,
         "index_provenance": index_provenance,
         "runtime_snapshot_paths": runtime_snapshot_paths,
         "manifest_path": str(manifest_path),
         "metric_keys": list(metric_keys),
+        "repeat_count": repeat_count,
+        "seed": seed,
     }
+    if defended_aggregate is not None:
+        summary["defended"] = defended_aggregate
+        summary["defense_delta"] = defense_delta_aggregate
     if eval_warnings:
         summary["warnings"] = list(eval_warnings)
     if attack_trace_path is not None:
@@ -444,6 +571,170 @@ def run_experiments(
         target_retrieval_aggregate,
         metrics_path,
     )
+    return summary
+
+
+def _run_repeated_experiments(
+    *,
+    mode: EvalMode,
+    label: str | None,
+    k: int,
+    user_id: int | None,
+    batch_size: int,
+    settings: Settings | None,
+    es_client: Any | None,
+    results_root: Path | None,
+    allow_overwrite: bool,
+    attack_config_path: Path | None,
+    repeat_count: int,
+    seed: int,
+) -> dict[str, Any]:
+    resolved_settings = settings or get_settings()
+    resolved_es_client = es_client if es_client is not None else get_es_client()
+    run_label = _normalize_label(label) if label is not None else _default_run_label()
+    run_dir = resolve_run_dir(settings=resolved_settings, label=run_label, results_root=results_root)
+    _prepare_run_dir(run_dir=run_dir, allow_overwrite=allow_overwrite)
+
+    llm_config = load_llm_config(settings=resolved_settings)
+    resolved_attack_config_path = (
+        attack_config_path.resolve()
+        if attack_config_path is not None
+        else resolved_settings.resolved_attack_config_path
+    )
+    attack_config = load_attack_config(resolved_attack_config_path)
+    attack_config_sha256 = _hash_file(resolved_attack_config_path) if resolved_attack_config_path.exists() else None
+    defense_config = load_defense_runtime_config(settings=resolved_settings)
+    defense_config_path = resolved_settings.resolved_defense_config_path
+    defense_config_sha256 = _hash_file(defense_config_path) if defense_config_path.exists() and defense_config_path.stat().st_size > 0 else None
+    runtime_snapshot_paths = _write_runtime_config_snapshots(
+        run_dir=run_dir,
+        llm_config=llm_config,
+        attack_config=attack_config,
+        attack_config_sha256=attack_config_sha256,
+        defense_config=defense_config,
+        defense_config_sha256=defense_config_sha256,
+    )
+
+    repeat_root = run_dir / "repeats"
+    repeat_root.mkdir(parents=True, exist_ok=True)
+
+    repeat_summaries: list[dict[str, Any]] = []
+    repeat_payloads: list[dict[str, Any]] = []
+    for repeat_index in range(repeat_count):
+        repeat_label = f"repeat_{repeat_index + 1:03d}"
+        repeat_summary = run_experiments(
+            mode=mode,
+            label=repeat_label,
+            k=k,
+            user_id=user_id,
+            batch_size=batch_size,
+            settings=resolved_settings,
+            es_client=resolved_es_client,
+            results_root=repeat_root,
+            allow_overwrite=True,
+            attack_config_path=resolved_attack_config_path,
+            repeat_count=1,
+            seed=seed + repeat_index,
+        )
+        repeat_summaries.append(repeat_summary)
+        repeat_payloads.append(_load_metrics_payload(Path(str(repeat_summary["metrics_path"]))))
+
+    baseline = _mean_metric_sections(repeat_payloads, "baseline")
+    attacked = _mean_metric_sections(repeat_payloads, "attacked")
+    delta = _mean_metric_sections(repeat_payloads, "delta")
+    defended = _mean_metric_sections(repeat_payloads, "defended")
+    defense_delta = _mean_metric_sections(repeat_payloads, "defense_delta")
+    warnings = _merge_repeat_warnings(repeat_payloads)
+    target_retrieval = _aggregate_repeat_target_retrieval(repeat_payloads)
+    repeat_stats = _build_repeat_stats(repeat_payloads)
+    first_payload = repeat_payloads[0] if repeat_payloads else {}
+    first_metadata = first_payload.get("metadata") if isinstance(first_payload.get("metadata"), dict) else {}
+
+    payload: dict[str, Any] = {
+        "label": run_label,
+        "mode": mode,
+        "k": int(k),
+        "requested_users": int(first_payload.get("requested_users", batch_size if mode == "batch" else 0)),
+        "evaluated_users": int(first_payload.get("evaluated_users", 0)),
+        "skipped_users": int(first_payload.get("skipped_users", 0)),
+        "metadata": {
+            **first_metadata,
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "repeat_count": repeat_count,
+            "seed": seed,
+            "runtime_snapshot_paths": runtime_snapshot_paths,
+            "repeat_run_dirs": [str(summary["run_dir"]) for summary in repeat_summaries],
+        },
+        "baseline": baseline,
+        "attacked": attacked,
+        "delta": delta,
+        "target_retrieval": target_retrieval,
+        "per_user": [],
+        "skipped": [],
+        "repeat_stats": repeat_stats,
+        "repeat_runs": repeat_summaries,
+    }
+    if defended:
+        payload["defended"] = defended
+    if defense_delta:
+        payload["defense_delta"] = defense_delta
+    if warnings:
+        payload["warnings"] = warnings
+
+    metrics_path = run_dir / "metrics.json"
+    metrics_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path = run_dir / "experiment_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "label": run_label,
+                "mode": mode,
+                "k": int(k),
+                "requested_users": payload["requested_users"],
+                "evaluated_users": payload["evaluated_users"],
+                "skipped_users": payload["skipped_users"],
+                "attack_config_sha256": attack_config_sha256,
+                "attack_config_path": str(resolved_attack_config_path),
+                "defense_config_sha256": defense_config_sha256,
+                "defense_config_path": str(defense_config_path),
+                "runtime_snapshot_paths": runtime_snapshot_paths,
+                "metrics_path": str(metrics_path),
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "repeat_count": repeat_count,
+                "seed": seed,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary: dict[str, Any] = {
+        "label": run_label,
+        "run_dir": str(run_dir),
+        "metrics_path": str(metrics_path),
+        "manifest_path": str(manifest_path),
+        "mode": mode,
+        "k": int(k),
+        "requested_users": payload["requested_users"],
+        "evaluated_users": payload["evaluated_users"],
+        "skipped_users": payload["skipped_users"],
+        "baseline": baseline,
+        "attacked": attacked,
+        "delta": delta,
+        "target_retrieval": target_retrieval,
+        "repeat_count": repeat_count,
+        "seed": seed,
+        "runtime_snapshot_paths": runtime_snapshot_paths,
+        "repeat_stats": repeat_stats,
+    }
+    if defended:
+        summary["defended"] = defended
+    if defense_delta:
+        summary["defense_delta"] = defense_delta
+    if warnings:
+        summary["warnings"] = warnings
     return summary
 
 
@@ -467,23 +758,136 @@ def _hash_file(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
+def _load_metrics_payload(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _mean_metric_sections(repeat_payloads: list[dict[str, Any]], key: str) -> dict[str, float]:
+    rows = [item.get(key) for item in repeat_payloads if isinstance(item.get(key), dict)]
+    if not rows:
+        return {}
+    metric_keys = sorted({metric_key for row in rows for metric_key in row.keys()})
+    return _round_metrics(mean_metrics(rows, metric_keys))
+
+
+def _merge_repeat_warnings(repeat_payloads: list[dict[str, Any]]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for payload in repeat_payloads:
+        warnings = payload.get("warnings", [])
+        if not isinstance(warnings, list):
+            continue
+        for item in warnings:
+            text = str(item).strip()
+            if text == "" or text in seen:
+                continue
+            seen.add(text)
+            output.append(text)
+    return output
+
+
+def _aggregate_repeat_target_retrieval(repeat_payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = [payload.get("target_retrieval") for payload in repeat_payloads if isinstance(payload.get("target_retrieval"), dict)]
+    if not rows:
+        return {}
+
+    output = dict(rows[0])
+    numeric_keys = [
+        key
+        for key in output.keys()
+        if key.endswith("_rate") or key.startswith("target_retrieval_mean_rank")
+    ]
+    for key in numeric_keys:
+        values = [float(row[key]) for row in rows if isinstance(row.get(key), (int, float))]
+        if values:
+            output[key] = round(sum(values) / float(len(values)), 6)
+    count_keys = [
+        "users",
+        "target_in_retrieval_baseline_users",
+        "target_in_retrieval_attacked_users",
+        "target_in_retrieval_defended_users",
+        "target_retrieval_rank_changed_users",
+        "target_retrieval_defense_rank_changed_users",
+    ]
+    for key in count_keys:
+        values = [int(row[key]) for row in rows if isinstance(row.get(key), int)]
+        if values:
+            output[key] = int(round(sum(values) / float(len(values))))
+    return output
+
+
+def _build_repeat_stats(repeat_payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    def _section(section_key: str) -> dict[str, Any] | None:
+        rows = [payload.get(section_key) for payload in repeat_payloads if isinstance(payload.get(section_key), dict)]
+        if not rows:
+            return None
+        metric_keys = sorted({metric_key for row in rows for metric_key in row.keys()})
+        return {
+            "metrics": {
+                key: _round_stats(metric_stats([float(row.get(key, 0.0)) for row in rows]))
+                for key in metric_keys
+            },
+            "significance": {
+                key: _round_stats(paired_significance([float(row.get(key, 0.0)) for row in rows]))
+                for key in metric_keys
+            }
+            if section_key in {"delta", "defense_delta"}
+            else {},
+        }
+
+    return {
+        "repeat_count": len(repeat_payloads),
+        "seed": int(
+            (
+                repeat_payloads[0].get("metadata", {}).get("seed")
+                if repeat_payloads and isinstance(repeat_payloads[0].get("metadata"), dict)
+                else 42
+            )
+            or 42
+        ),
+        "baseline": _section("baseline"),
+        "attacked": _section("attacked"),
+        "delta": _section("delta"),
+        "defended": _section("defended"),
+        "defense_delta": _section("defense_delta"),
+    }
+
+
+def _round_stats(values: dict[str, Any]) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    for key, value in values.items():
+        if isinstance(value, float):
+            output[key] = round(value, 6)
+        else:
+            output[key] = value
+    return output
+
+
 def _write_runtime_config_snapshots(
     *,
     run_dir: Path,
     llm_config: LlmConfig,
     attack_config: AttackConfig,
     attack_config_sha256: str | None,
+    defense_config: DefenseConfig,
+    defense_config_sha256: str | None,
 ) -> dict[str, str]:
     llm_path = run_dir / "llm_config.runtime.json"
     attack_path = run_dir / "attack_config.runtime.json"
+    defense_path = run_dir / "defense_config.runtime.json"
     llm_path.write_text(json.dumps(llm_config.model_dump(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     attack_payload = attack_config.model_dump()
     if attack_config_sha256 is not None:
         attack_payload["sha256"] = attack_config_sha256
     attack_path.write_text(json.dumps(attack_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    defense_payload = defense_config.model_dump()
+    if defense_config_sha256 is not None:
+        defense_payload["sha256"] = defense_config_sha256
+    defense_path.write_text(json.dumps(defense_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "llm_config_runtime_path": str(llm_path),
         "attack_config_runtime_path": str(attack_path),
+        "defense_config_runtime_path": str(defense_path),
     }
 
 
@@ -563,6 +967,8 @@ def _resolve_user_ids(
     mode: EvalMode,
     user_id: int | None,
     batch_size: int,
+    repeat_count: int,
+    seed: int,
 ) -> list[int]:
     all_users = users_service.list_users(limit=1_000_000)
     ordered_ids = sorted(int(item["user_id"]) for item in all_users)
@@ -575,7 +981,11 @@ def _resolve_user_ids(
         return [int(user_id)]
 
     if mode == "batch":
-        return ordered_ids[:batch_size]
+        if batch_size >= len(ordered_ids):
+            return ordered_ids
+        if repeat_count == 1:
+            return ordered_ids[:batch_size]
+        return sorted(random.Random(seed).sample(ordered_ids, batch_size))
 
     return ordered_ids
 
@@ -1189,19 +1599,27 @@ def _aggregate_target_retrieval(*, per_user_rows: list[dict[str, Any]], target_m
     total_users = len(per_user_rows)
     baseline_present = 0
     attacked_present = 0
+    defended_present = 0
     rank_changed = 0
+    defense_rank_changed = 0
     baseline_ranks: list[int] = []
     attacked_ranks: list[int] = []
+    defended_ranks: list[int] = []
     lifts: list[int] = []
+    defense_lifts: list[int] = []
 
     for row in per_user_rows:
         baseline_rank_raw = row.get("target_retrieval_rank_baseline")
         attacked_rank_raw = row.get("target_retrieval_rank_attacked")
+        defended_rank_raw = row.get("target_retrieval_rank_defended")
         lift_raw = row.get("target_retrieval_rank_lift")
+        defense_lift_raw = row.get("target_retrieval_defense_lift")
 
         baseline_rank = int(baseline_rank_raw) if isinstance(baseline_rank_raw, int) else None
         attacked_rank = int(attacked_rank_raw) if isinstance(attacked_rank_raw, int) else None
+        defended_rank = int(defended_rank_raw) if isinstance(defended_rank_raw, int) else None
         lift = int(lift_raw) if isinstance(lift_raw, int) else None
+        defense_lift = int(defense_lift_raw) if isinstance(defense_lift_raw, int) else None
 
         if baseline_rank is not None:
             baseline_present += 1
@@ -1209,18 +1627,28 @@ def _aggregate_target_retrieval(*, per_user_rows: list[dict[str, Any]], target_m
         if attacked_rank is not None:
             attacked_present += 1
             attacked_ranks.append(attacked_rank)
+        if defended_rank is not None:
+            defended_present += 1
+            defended_ranks.append(defended_rank)
         if baseline_rank != attacked_rank:
             rank_changed += 1
+        if attacked_rank != defended_rank:
+            defense_rank_changed += 1
         if lift is not None:
             lifts.append(lift)
+        if defense_lift is not None:
+            defense_lifts.append(defense_lift)
 
     baseline_presence_rate = (baseline_present / float(total_users)) if total_users > 0 else 0.0
     attacked_presence_rate = (attacked_present / float(total_users)) if total_users > 0 else 0.0
+    defended_presence_rate = (defended_present / float(total_users)) if total_users > 0 else 0.0
     mean_baseline_rank = (sum(baseline_ranks) / float(len(baseline_ranks))) if baseline_ranks else None
     mean_attacked_rank = (sum(attacked_ranks) / float(len(attacked_ranks))) if attacked_ranks else None
+    mean_defended_rank = (sum(defended_ranks) / float(len(defended_ranks))) if defended_ranks else None
     mean_lift = (sum(lifts) / float(len(lifts))) if lifts else None
+    mean_defense_lift = (sum(defense_lifts) / float(len(defense_lifts))) if defense_lifts else None
 
-    return {
+    output = {
         "applicable": True,
         "target_movie_id": int(target_movie_id),
         "users": int(total_users),
@@ -1238,6 +1666,21 @@ def _aggregate_target_retrieval(*, per_user_rows: list[dict[str, Any]], target_m
         else None,
         "target_retrieval_mean_rank_lift": round(float(mean_lift), 6) if mean_lift is not None else None,
     }
+    if defended_ranks or any("target_in_retrieval_defended" in row for row in per_user_rows):
+        output["target_in_retrieval_defended_users"] = int(defended_present)
+        output["target_in_retrieval_defended_rate"] = round(float(defended_presence_rate), 6)
+        output["target_retrieval_defense_rank_changed_users"] = int(defense_rank_changed)
+        output["target_retrieval_defense_rank_changed_rate"] = round(
+            (defense_rank_changed / float(total_users)) if total_users > 0 else 0.0,
+            6,
+        )
+        output["target_retrieval_mean_rank_defended"] = (
+            round(float(mean_defended_rank), 6) if mean_defended_rank is not None else None
+        )
+        output["target_retrieval_mean_rank_defense_lift"] = (
+            round(float(mean_defense_lift), 6) if mean_defense_lift is not None else None
+        )
+    return output
 
 
 def _round_metrics(values: dict[str, float]) -> dict[str, float]:

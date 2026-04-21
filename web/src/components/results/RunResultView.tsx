@@ -71,6 +71,13 @@ function compactJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function metricMapEntries(values: Record<string, number> | null | undefined): Array<[string, number]> {
+  if (!values) {
+    return [];
+  }
+  return Object.entries(values).filter(([, value]) => typeof value === "number");
+}
+
 export function RunResultView({ detail, rawSections = [] }: RunResultViewProps): JSX.Element {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -150,6 +157,42 @@ export function RunResultView({ detail, rawSections = [] }: RunResultViewProps):
           <MetricComparisonChart mode={detail.summary.mode ?? "-"} rows={metricRows} />
         </div>
       </article>
+
+      {metricMapEntries(detail.summary.defended).length > 0 ? (
+        <article className="surface">
+          <h3 className="section-title">Defense benchmark</h3>
+          <p className="section-caption">Attacked vs attacked+defense aggregate metrics.</p>
+          <div className="kv-grid" style={{ marginTop: 12 }}>
+            {metricMapEntries(detail.summary.defended).map(([key, defendedValue]) => (
+              <div key={key} className="kv-row">
+                <span>{key.toUpperCase()}</span>
+                <strong>
+                  defended {formatMetric(defendedValue)} / delta {formatMetric(detail.summary.defense_delta[key])}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </article>
+      ) : null}
+
+      {detail.repeat_stats ? (
+        <article className="surface">
+          <h3 className="section-title">Repeated-run statistics</h3>
+          <p className="section-caption">
+            {detail.repeat_stats.repeat_count} repeats from seed {detail.repeat_stats.seed}.
+          </p>
+          <div className="kv-grid" style={{ marginTop: 12 }}>
+            {Object.entries(detail.repeat_stats.delta?.metrics ?? {}).map(([key, stats]) => (
+              <div key={key} className="kv-row">
+                <span>{key.toUpperCase()}</span>
+                <strong>
+                  mean {formatMetric(stats.mean)} / std {formatMetric(stats.stddev)} / p {formatMetric(detail.repeat_stats?.delta?.significance?.[key]?.p_value ?? undefined)}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </article>
+      ) : null}
 
       <div className="result-evidence-grid">
         <article className="surface">

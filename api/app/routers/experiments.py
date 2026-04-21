@@ -112,6 +112,8 @@ def _resolve_run_options(payload: ExperimentRunRequest) -> ExperimentRunOptions:
         output_dir=resolve_optional_path(payload.output_dir),
         es_url=payload.es_url,
         attack_config=resolve_optional_path(payload.attack_config),
+        repeat_count=payload.repeat_count,
+        seed=payload.seed,
     )
 
 

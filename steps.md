@@ -4,3 +4,5 @@ sudo ELASTICSEARCH_URL=http://localhost:9200 uv run --project api python -m api.
 sudo ELASTICSEARCH_URL=http://localhost:9200 uv run --project api python -m api.app.cli.cli attack build-poisoned
 sudo ELASTICSEARCH_URL=http://localhost:9200 uv run --project api python -m api.app.cli.cli index poisoned
 sudo ELASTICSEARCH_URL=http://localhost:9200 uv run --project api python -m api.app.cli.cli wizard               
+uv sync --project api --frozen
+uv sync --project sdk/python --frozen

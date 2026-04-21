@@ -33,7 +33,7 @@ def put_llm_settings(
         if role.provider != "local" and not option.available:
             raise HTTPException(
                 status_code=400,
-                detail=f"Provider '{role.provider}' for {role_name} is unavailable because its secret file is missing",
+                detail=f"Provider '{role.provider}' for {role_name} is unavailable because its API key env var is missing",
             )
 
     _save_llm_config(settings, config)

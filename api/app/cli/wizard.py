@@ -132,22 +132,19 @@ def _environment_checks_screen() -> None:
         "gemini": "GEMINI_API_KEY",
         "qwen": "QWEN_API_KEY",
     }
-    for provider, secret_path in settings.provider_secret_paths.items():
-        api_key, source = resolve_api_key(provider_name=provider, settings=settings, warn_on_file_fallback=False)
+    for provider, env_name in provider_env_key.items():
+        api_key, source = resolve_api_key(provider_name=provider, settings=settings)
         exists = api_key is not None
-        if source.startswith("file:"):
-            detail = f"{source} ({secret_path}) [deprecated fallback]"
-        elif source.startswith("env:"):
+        if source.startswith("env:"):
             detail = source
         else:
             detail = "missing"
-        env_name = provider_env_key.get(provider, "API_KEY")
         checks.append(
             {
-                "name": f"Secret present: {provider}",
+                "name": f"API key configured: {provider}",
                 "status": "PASS" if exists else "WARN",
                 "detail": detail,
-                "fix": f"Set {env_name} in .env/.env.key (legacy fallback: {secret_path})",
+                "fix": f"Set {env_name} in .env or .env.key",
             }
         )
 
@@ -479,6 +476,8 @@ def _run_experiments_screen() -> None:
                     output_dir=None,
                     es_url=None,
                     attack_config=None,
+                    repeat_count=1,
+                    seed=42,
                 )
             )
         elif choice == "batch":
@@ -500,6 +499,8 @@ def _run_experiments_screen() -> None:
                     output_dir=None,
                     es_url=None,
                     attack_config=None,
+                    repeat_count=1,
+                    seed=42,
                 )
             )
         else:
@@ -520,6 +521,8 @@ def _run_experiments_screen() -> None:
                     output_dir=None,
                     es_url=None,
                     attack_config=None,
+                    repeat_count=1,
+                    seed=42,
                 )
             )
 

@@ -41,11 +41,6 @@ class Settings(BaseSettings):
     qwen_base_url: str | None = None
     qwen_api_key: str | None = None
 
-    chatgpt_api_key_file: Path = Path("/run/secrets/chatgpt_api_key")
-    claude_api_key_file: Path = Path("/run/secrets/claude_api_key")
-    gemini_api_key_file: Path = Path("/run/secrets/gemini_api_key")
-    qwen_api_key_file: Path = Path("/run/secrets/qwen_api_key")
-
     repo_root: Path = Path(__file__).resolve().parents[2]
     data_root: Path | None = None
     config_root: Path | None = None
@@ -84,6 +79,14 @@ class Settings(BaseSettings):
         return (self.resolved_config_dir / "llm_config.json").resolve()
 
     @property
+    def resolved_attack_config_path(self) -> Path:
+        return (self.resolved_config_dir / "attack_config.json").resolve()
+
+    @property
+    def resolved_defense_config_path(self) -> Path:
+        return (self.resolved_config_dir / "defense_config.json").resolve()
+
+    @property
     def resolved_llm_models_path(self) -> Path:
         if self.llm_models_file is not None:
             return self.llm_models_file.resolve()
@@ -94,16 +97,6 @@ class Settings(BaseSettings):
         if self.static_root is not None:
             return self.static_root.resolve()
         return (self.repo_root / "api" / "app" / "static").resolve()
-
-    @property
-    def provider_secret_paths(self) -> dict[str, Path]:
-        return {
-            "chatgpt": self.chatgpt_api_key_file,
-            "claude": self.claude_api_key_file,
-            "gemini": self.gemini_api_key_file,
-            "qwen": self.qwen_api_key_file,
-        }
-
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

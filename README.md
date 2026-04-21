@@ -55,6 +55,8 @@ This repository implements an end-to-end poisoning research workflow on MovieLen
 
 The shortest path to a working local stack:
 
+Run the following commands from the repository root. If you are inside a subdirectory such as `sdk/python`, pass the correct relative project path (for example `uv run --project ../../api ...`).
+
 ```bash
 # 1) Prepare processed outputs from MovieLens files.
 uv run --project api python -m api.app.cli.cli data prepare
@@ -153,16 +155,12 @@ docker build -t ragpoison:dev -f Dockerfile .
 | `OPENAI_COMPAT_API_KEY` | Conditional | none | Optional shared transit key for OpenAI-compatible providers (`chatgpt`, `claude`, `gemini`) when provider-specific key is unset. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
 | `CHATGPT_BASE_URL` | No | `https://api.openai.com/v1` | ChatGPT/OpenAI-compatible base URL override. | `api/app/settings.py`, `api/app/llm/credentials.py`, `api/app/llm/providers_chatgpt.py`, `docker/docker-compose.yml` |
 | `CHATGPT_API_KEY` | Conditional | none | Primary ChatGPT API key env var. | `api/app/settings.py`, `api/app/llm/credentials.py`, `api/app/llm/providers_chatgpt.py`, `docker/docker-compose.yml` |
-| `CLAUDE_BASE_URL` | No | none | Future-facing Claude base URL override (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
-| `CLAUDE_API_KEY` | Conditional | none | Primary Claude API key env var (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
-| `GEMINI_BASE_URL` | No | none | Future-facing Gemini base URL override (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
-| `GEMINI_API_KEY` | Conditional | none | Primary Gemini API key env var (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
-| `QWEN_BASE_URL` | No | none | Future-facing Qwen base URL override (provider remains MVP stub). | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `CLAUDE_BASE_URL` | No | `https://api.anthropic.com/v1` | Claude Messages API base URL override. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `CLAUDE_API_KEY` | Conditional | none | Primary Claude API key env var. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `GEMINI_BASE_URL` | No | `https://generativelanguage.googleapis.com/v1beta` | Gemini Generative Language API base URL override. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `GEMINI_API_KEY` | Conditional | none | Primary Gemini API key env var. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
+| `QWEN_BASE_URL` | No | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Qwen OpenAI-compatible base URL override. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
 | `QWEN_API_KEY` | Conditional | none | Primary Qwen API key env var for standalone Qwen access. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
-| `CHATGPT_API_KEY_FILE` | Deprecated fallback | `/run/secrets/chatgpt_api_key` | Legacy file path for ChatGPT key. Used only when env key is absent. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
-| `CLAUDE_API_KEY_FILE` | Deprecated fallback | `/run/secrets/claude_api_key` | Legacy file path for Claude key. Used only when env key is absent. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
-| `GEMINI_API_KEY_FILE` | Deprecated fallback | `/run/secrets/gemini_api_key` | Legacy file path for Gemini key. Used only when env key is absent. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
-| `QWEN_API_KEY_FILE` | Deprecated fallback | `/run/secrets/qwen_api_key` | Legacy file path for Qwen key. Used only when env key is absent. | `api/app/settings.py`, `api/app/llm/credentials.py`, `docker/docker-compose.yml` |
 | `DATA_ROOT` | No | auto-resolved | Optional override for data root path. | `api/app/settings.py` |
 | `CONFIG_ROOT` | No | auto-resolved | Optional override for config directory. | `api/app/settings.py` |
 | `PROCESSED_ROOT` | No | auto-resolved | Optional override for processed outputs directory. | `api/app/settings.py` |
@@ -203,21 +201,18 @@ docker build -t ragpoison:dev -f Dockerfile .
 ### Secrets and security notes
 
 - Env vars are the primary credential source. The app loads `.env` by default and also supports `.env.key` as an optional alias.
-- Compose still mounts provider keys via Docker secrets from `secrets/*.txt` into `/run/secrets/*` for backward compatibility.  
-  [Source: docker/docker-compose.yml]
-- Legacy `*_API_KEY_FILE` fallback remains available for one deprecation cycle. A warning is logged when file fallback is used.  
-  [Sources: api/app/llm/credentials.py, api/app/llm/registry.py]
-- Cloud providers are marked unavailable when neither env key nor legacy file key is present.  
+- Compose reads provider keys from `.env` / `.env.key`; `secrets/` files are no longer used.  
+  [Sources: docker/docker-compose.yml, api/app/settings.py]
+- Cloud providers are marked unavailable when no API key env configuration is present.  
   [Sources: api/app/llm/registry.py, api/app/routers/settings_llm.py]
-- `claude`, `gemini`, and `qwen` providers are selectable but `generate()` is currently not implemented in this repo version.  
-  [Sources: api/app/llm/providers_claude.py, api/app/llm/providers_gemini.py, api/app/llm/providers_qwen.py]
+- `chatgpt`, `claude`, `gemini`, and `qwen` all have real generate paths when their env keys are configured.  
+  [Sources: api/app/llm/providers_chatgpt.py, api/app/llm/providers_claude.py, api/app/llm/providers_gemini.py, api/app/llm/providers_qwen.py]
 
-### Migration: `secrets/*.txt` -> `.env`
+### Provider key setup
 
 1. Copy `.env.example` to `.env`.
 2. Set provider keys in `.env` (`CHATGPT_API_KEY`, `CLAUDE_API_KEY`, `GEMINI_API_KEY`, `QWEN_API_KEY`) and optional transit vars (`OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY`).
-3. Keep legacy `secrets/*.txt` only as temporary fallback.
-4. Restart app/compose. Remove old secret files after validation.
+3. Restart the app or compose stack after updating keys.
 
 ## Running the project
 
@@ -308,7 +303,6 @@ docker/           Compose stack, index mappings, helper scripts
 sdk/python/       Python SDK client package
 data/             Runtime config, processed outputs, results
 ml-100/           MovieLens source files
-secrets/          Local provider key files for compose secrets
 ```
 
 [Sources: docker/docker-compose.yml, api/app/main.py, api/app/cli/cli.py, agent/datasets/poison_builder.py, rag/recsys/candidate_gen.py, sdk/python/ragpoison_sdk/client.py, api/app/data/paths.py]

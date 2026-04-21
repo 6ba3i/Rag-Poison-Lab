@@ -49,6 +49,8 @@ def test_single_demo_planner_defaults_and_override() -> None:
         output_dir=None,
         es_url=None,
         attack_config=None,
+        repeat_count=1,
+        seed=42,
     )
     resolved = plan_experiment_run(options=base)
     assert resolved.run_prepare is False

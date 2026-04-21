@@ -95,15 +95,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       QWEN_BASE_URL: ${QWEN_BASE_URL:-}
       QWEN_API_KEY: ${QWEN_API_KEY:-}
-      CHATGPT_API_KEY_FILE: /run/secrets/chatgpt_api_key
-      CLAUDE_API_KEY_FILE: /run/secrets/claude_api_key
-      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
-      QWEN_API_KEY_FILE: /run/secrets/qwen_api_key
-    secrets:
-      - chatgpt_api_key
-      - claude_api_key
-      - gemini_api_key
-      - qwen_api_key
     healthcheck:
       test:
         [
@@ -161,13 +152,3 @@ services:
 volumes:
   es_data:
   ollama_data:
-
-secrets:
-  chatgpt_api_key:
-    file: ../secrets/chatgpt_api_key.txt
-  claude_api_key:
-    file: ../secrets/claude_api_key.txt
-  gemini_api_key:
-    file: ../secrets/gemini_api_key.txt
-  qwen_api_key:
-    file: ../secrets/qwen_api_key.txt

@@ -140,16 +140,8 @@ For a user:
 
 ### Key handling
 
-* No keys in `.env`
-* No keys in shell env by default
-* Keys stored as **Docker secrets** in `secrets/` files:
-
-  * `chatgpt_api_key.txt`
-  * `claude_api_key.txt`
-  * `gemini_api_key.txt`
-  * `qwen_api_key.txt`
-
-Backend reads them from `/run/secrets/<name>`.
+* Keys provided via `.env` / `.env.key`
+* No committed provider keys in the repository
 
 ### Provider and model selection
 

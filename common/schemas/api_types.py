@@ -5,7 +5,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from common.schemas.attack_config import AttackType, TargetBoostField, TargetBoostPolicy
-from common.schemas.llm_config import LlmConfig, ProviderName, RankingMode
+from common.schemas.defense_config import DefenseSuspicionMode
+from common.schemas.llm_config import LlmConfig, ProviderName, RankingMode, RetrievalMode
 
 RecommendationMode = Literal["baseline", "attacked"]
 HistorySplit = Literal["train", "all"]
@@ -87,6 +88,7 @@ class TraceResponse(BaseModel):
     user_id: int
     mode: RecommendationMode
     ranking_mode: RankingMode = "deterministic"
+    retrieval_mode: RetrievalMode = "lexical"
     retrieval_query: str
     retrieved_docs: list[TraceDoc]
     rerank_candidates: list[TraceRerankCandidate] | None = None
@@ -94,6 +96,7 @@ class TraceResponse(BaseModel):
     rerank_raw_response: str | None = None
     rerank_parsed_order: list[int] | None = None
     rerank_fallback: bool | None = None
+    retrieval_debug: dict[str, Any] | None = None
 
 
 class LlmProviderOption(BaseModel):
@@ -126,6 +129,8 @@ class ExperimentRunRequest(BaseModel):
     output_dir: str | None = None
     es_url: str | None = None
     attack_config: str | None = None
+    repeat_count: int = Field(default=1, ge=1, le=100)
+    seed: int = Field(default=42, ge=0)
 
 
 class ExperimentRunResponse(BaseModel):
@@ -151,6 +156,72 @@ class AttackSettingsResponse(BaseModel):
     config_sha256: str | None = None
 
 
+class AttackSettingsRequest(BaseModel):
+    attack_type: AttackType
+    poison_fraction: float = Field(ge=0.0, le=1.0)
+    target_movie_id: int | None = Field(default=None, ge=1)
+    payload_text: str = ""
+    keyword_list: list[str] = Field(default_factory=list)
+    target_boost_policy: TargetBoostPolicy = "keyword_burst"
+    target_boost_strength: int = Field(default=4, ge=1, le=20)
+    target_fields: list[TargetBoostField] = Field(default_factory=list)
+
+
+class DefenseSettingsRequest(BaseModel):
+    enabled: bool = False
+    retrieval_guard_enabled: bool = True
+    retrieval_suspicion_mode: DefenseSuspicionMode = "filter"
+    retrieval_penalty_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    rerank_sanitization_enabled: bool = True
+    suspicious_patterns: list[str] = Field(default_factory=list)
+
+
+class DefenseSettingsResponse(BaseModel):
+    enabled: bool = False
+    retrieval_guard_enabled: bool = True
+    retrieval_suspicion_mode: DefenseSuspicionMode = "filter"
+    retrieval_penalty_weight: float = 0.5
+    rerank_sanitization_enabled: bool = True
+    suspicious_patterns: list[str] = Field(default_factory=list)
+    config_path: str
+    config_exists: bool
+    config_sha256: str | None = None
+
+
+class MetricStats(BaseModel):
+    count: int = 0
+    mean: float = 0.0
+    stddev: float = 0.0
+    stderr: float = 0.0
+    ci95_low: float | None = None
+    ci95_high: float | None = None
+
+
+class MetricComparisonSignificance(BaseModel):
+    count: int = 0
+    positive: int = 0
+    negative: int = 0
+    ties: int = 0
+    p_value: float | None = None
+    method: str = "paired_sign_test"
+    direction: str | None = None
+
+
+class RepeatStatsSection(BaseModel):
+    metrics: dict[str, MetricStats] = Field(default_factory=dict)
+    significance: dict[str, MetricComparisonSignificance] = Field(default_factory=dict)
+
+
+class RepeatStatsResponse(BaseModel):
+    repeat_count: int = 0
+    seed: int = 42
+    baseline: RepeatStatsSection | None = None
+    attacked: RepeatStatsSection | None = None
+    delta: RepeatStatsSection | None = None
+    defended: RepeatStatsSection | None = None
+    defense_delta: RepeatStatsSection | None = None
+
+
 class RunSummary(BaseModel):
     label: str
     generated_at_utc: str | None = None
@@ -163,7 +234,10 @@ class RunSummary(BaseModel):
     baseline: dict[str, float] = Field(default_factory=dict)
     attacked: dict[str, float] = Field(default_factory=dict)
     delta: dict[str, float] = Field(default_factory=dict)
+    defended: dict[str, float] = Field(default_factory=dict)
+    defense_delta: dict[str, float] = Field(default_factory=dict)
     warnings_count: int = 0
+    repeat_count: int = 1
     has_metrics: bool = False
     has_manifest: bool = False
     has_attack_trace: bool = False
@@ -186,8 +260,10 @@ class RunArtifacts(BaseModel):
     delta_csv_path: str | None = None
     llm_runtime_path: str | None = None
     attack_runtime_path: str | None = None
+    defense_runtime_path: str | None = None
     llm_snapshot_path: str | None = None
     attack_snapshot_path: str | None = None
+    defense_snapshot_path: str | None = None
 
 
 class RunDetailResponse(BaseModel):
@@ -195,6 +271,7 @@ class RunDetailResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] | None = None
     target_retrieval: dict[str, Any] | None = None
+    repeat_stats: RepeatStatsResponse | None = None
     per_user: list[dict[str, Any]] = Field(default_factory=list)
     manifest: dict[str, Any] | None = None
     artifacts: RunArtifacts

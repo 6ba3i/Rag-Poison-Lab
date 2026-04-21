@@ -205,12 +205,6 @@ This is the complete intended repo map. Codex must keep this map updated if file
 │
 ├── ml-100/ # already present extracted MovieLens 100K
 │
-├── secrets/ # not committed, local only
-│ ├── chatgpt_api_key.txt
-│ ├── claude_api_key.txt
-│ ├── gemini_api_key.txt
-│ └── qwen_api_key.txt
-│
 ├── Dockerfile # root, multi-stage, builds web then backend
 ├── README.md
 └── .gitignore
@@ -270,12 +264,12 @@ No API keys are stored in config.
 
 ### Keys
 
-Keys must be provided via Docker secrets:
+Keys must be provided via environment variables loaded from `.env` / `.env.key`:
 
-- CHATGPT_API_KEY maps to secret file `secrets/chatgpt_api_key.txt`
-- CLAUDE_API_KEY maps to secret file `secrets/claude_api_key.txt`
-- GEMINI_API_KEY maps to secret file `secrets/gemini_api_key.txt`
-- QWEN_API_KEY maps to secret file `secrets/qwen_api_key.txt`
+- `CHATGPT_API_KEY`
+- `CLAUDE_API_KEY`
+- `GEMINI_API_KEY`
+- `QWEN_API_KEY`
 
 Default behavior:
 - If a provider key is missing, the provider is disabled in UI and CLI wizard with a clear message.

@@ -890,6 +890,48 @@ def test_eval_runner_overwrite_cleans_existing_run_directory(tmp_path: Path) -> 
     assert not (run_dir / "attack_trace.json").exists()
 
 
+def test_eval_runner_supports_defense_and_repeated_run_stats(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    settings.resolved_defense_config_path.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "retrieval_guard_enabled": True,
+                "retrieval_suspicion_mode": "filter",
+                "retrieval_penalty_weight": 0.25,
+                "rerank_sanitization_enabled": True,
+                "suspicious_patterns": ["ignore prior rules"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class CountableFakeElasticsearch(FakeElasticsearch):
+        def count(self, *, index: str, query: dict | None = None) -> dict[str, int]:
+            if index == "movies_poisoned":
+                return {"count": 1}
+            return {"count": 0}
+
+    summary = run_experiments(
+        mode="batch",
+        label="repeat_defense",
+        user_id=None,
+        batch_size=2,
+        k=10,
+        settings=settings,
+        es_client=CountableFakeElasticsearch(),
+        results_root=tmp_path / "runs",
+        repeat_count=2,
+        seed=7,
+    )
+
+    assert summary["repeat_count"] == 2
+    assert isinstance(summary["repeat_stats"], dict)
+    assert summary["repeat_stats"]["repeat_count"] == 2
+    assert "defended" in summary
+    assert "defense_delta" in summary
+
+
 def test_eval_runner_uses_resolved_config_dir_for_default_and_custom_config_root(tmp_path: Path) -> None:
     base_settings = _build_settings(tmp_path)
     runs_root = tmp_path / "runs"

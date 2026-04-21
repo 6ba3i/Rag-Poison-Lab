@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from api.app.llm import local_ollama, openai_compatible
+from api.app.llm import anthropic_client, gemini_client, local_ollama, openai_compatible
 from api.app.llm.local_ollama import LocalOllamaProvider
 from api.app.llm.providers_chatgpt import ChatGptProvider
+from api.app.llm.providers_claude import ClaudeProvider
+from api.app.llm.providers_gemini import GeminiProvider
 from api.app.llm.providers_qwen import QwenProvider
 from api.app.llm.registry import LlmRegistry
 from api.app.settings import Settings
@@ -91,10 +93,7 @@ def test_local_ollama_provider_health_list_and_generate(monkeypatch: pytest.Monk
     assert options["num_predict"] == 42
 
 
-def test_chatgpt_provider_generate_with_secret(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    secret_path = tmp_path / "chatgpt_api_key.txt"
-    secret_path.write_text("test-openai-key\n", encoding="utf-8")
-
+def test_chatgpt_provider_generate_with_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
     def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
@@ -108,7 +107,7 @@ def test_chatgpt_provider_generate_with_secret(monkeypatch: pytest.MonkeyPatch, 
 
     provider = ChatGptProvider(
         model="gpt-4o-mini",
-        api_key_file=secret_path,
+        api_key="test-openai-key",
         curated_models=["gpt-4o", "gpt-4o-mini"],
     )
     text = provider.generate(prompt="hello", system="be brief")
@@ -127,30 +126,86 @@ def test_chatgpt_provider_generate_with_secret(monkeypatch: pytest.MonkeyPatch, 
     assert provider.list_models() == ["gpt-4o", "gpt-4o-mini"]
     assert provider.healthcheck().available is True
 
-
-def test_cloud_provider_missing_key_and_mvp_stub(tmp_path: Path) -> None:
-    missing_secret = tmp_path / "missing_chatgpt.txt"
-    chatgpt = ChatGptProvider(model="gpt-4o", api_key_file=missing_secret, curated_models=[])
+def test_cloud_provider_missing_key_healthcheck() -> None:
+    chatgpt = ChatGptProvider(model="gpt-4o", curated_models=[])
     status = chatgpt.healthcheck()
     assert status.available is False
     with pytest.raises(RuntimeError, match="missing API key"):
         chatgpt.generate(prompt="hello")
 
-    qwen_secret = tmp_path / "qwen_api_key.txt"
-    qwen_secret.write_text("qwen-key\n", encoding="utf-8")
-    qwen = QwenProvider(model="qwen-plus", api_key_file=qwen_secret, curated_models=["qwen-plus"])
-    qwen_status = qwen.healthcheck()
-    assert qwen_status.available is True
-    assert qwen_status.healthy is False
-    with pytest.raises(NotImplementedError, match="not implemented in MVP"):
-        qwen.generate(prompt="hello")
+
+def test_claude_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return FakeResponse(200, {"content": [{"type": "text", "text": "{\"items\":[]}"}]})
+
+    monkeypatch.setattr(anthropic_client.httpx, "post", fake_post)
+    provider = ClaudeProvider(model="claude-3-5-haiku", api_key="claude-key", curated_models=["claude-3-5-haiku"])
+    output = provider.generate(prompt="hello", json_schema={"type": "object"})
+
+    assert output == "{\"items\":[]}"
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["x-api-key"] == "claude-key"
+    assert provider.healthcheck().healthy is True
+
+
+def test_gemini_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(
+        url: str,
+        params: dict[str, str],
+        json: dict[str, object],
+        timeout: float,
+    ) -> FakeResponse:
+        captured["url"] = url
+        captured["params"] = params
+        captured["json"] = json
+        return FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": "{\"items\":[]}"}]}}]})
+
+    monkeypatch.setattr(gemini_client.httpx, "post", fake_post)
+    provider = GeminiProvider(model="gemini-2.0-flash", api_key="gemini-key", curated_models=["gemini-2.0-flash"])
+    output = provider.generate(prompt="hello", json_schema={"type": "object"})
+
+    assert output == "{\"items\":[]}"
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    params = captured["params"]
+    assert isinstance(params, dict)
+    assert params["key"] == "gemini-key"
+    assert provider.healthcheck().healthy is True
+
+
+def test_qwen_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return FakeResponse(200, {"choices": [{"message": {"content": "qwen output"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    provider = QwenProvider(model="qwen-plus", api_key="qwen-key", curated_models=["qwen-plus"])
+    output = provider.generate(prompt="hello")
+
+    assert output == "qwen output"
+    assert captured["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer qwen-key"
+    assert provider.healthcheck().healthy is True
 
 
 def test_registry_chatgpt_env_only_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     settings = _build_settings_for_registry(
         tmp_path,
         chatgpt_api_key="env-openai-key",
-        chatgpt_api_key_file=tmp_path / "missing_chatgpt_api_key.txt",
     )
     registry = LlmRegistry(settings=settings)
     monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])
@@ -176,81 +231,11 @@ def test_registry_chatgpt_env_only_key(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert isinstance(headers, dict)
     assert headers["Authorization"] == "Bearer env-openai-key"
 
-
-def test_registry_chatgpt_file_fallback_logs_deprecation(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    secret_file = tmp_path / "chatgpt_api_key.txt"
-    secret_file.write_text("file-only-key\n", encoding="utf-8")
-    settings = _build_settings_for_registry(
-        tmp_path,
-        chatgpt_api_key_file=secret_file,
-    )
-    registry = LlmRegistry(settings=settings)
-    monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])
-
-    captured: dict[str, object] = {}
-
-    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
-        captured["headers"] = headers
-        return FakeResponse(200, {"choices": [{"message": {"content": "file output"}}]})
-
-    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
-
-    caplog.set_level("WARNING")
-    client = registry.get_provider_client(provider="chatgpt", model="gpt-4o-mini")
-    text = client.generate(prompt="hello")
-    assert text == "file output"
-
-    headers = captured["headers"]
-    assert isinstance(headers, dict)
-    assert headers["Authorization"] == "Bearer file-only-key"
-    assert "deprecated API key file fallback" in caplog.text
-    assert str(secret_file) in caplog.text
-    assert "file-only-key" not in caplog.text
-
-
-def test_registry_chatgpt_prefers_env_over_file(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    secret_file = tmp_path / "chatgpt_api_key.txt"
-    secret_file.write_text("file-key\n", encoding="utf-8")
-    settings = _build_settings_for_registry(
-        tmp_path,
-        chatgpt_api_key="env-key-wins",
-        chatgpt_api_key_file=secret_file,
-    )
-    registry = LlmRegistry(settings=settings)
-    monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])
-
-    captured: dict[str, object] = {}
-
-    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
-        captured["headers"] = headers
-        return FakeResponse(200, {"choices": [{"message": {"content": "env wins"}}]})
-
-    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
-
-    caplog.set_level("WARNING")
-    client = registry.get_provider_client(provider="chatgpt", model="gpt-4o-mini")
-    client.generate(prompt="hello")
-
-    headers = captured["headers"]
-    assert isinstance(headers, dict)
-    assert headers["Authorization"] == "Bearer env-key-wins"
-    assert "deprecated API key file fallback" not in caplog.text
-
-
 def test_registry_chatgpt_uses_shared_openai_compat_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     settings = _build_settings_for_registry(
         tmp_path,
         openai_compat_api_key="shared-transit-key",
         openai_compat_base_url="https://gateway.example/v1",
-        chatgpt_api_key_file=tmp_path / "missing_chatgpt_api_key.txt",
     )
     registry = LlmRegistry(settings=settings)
     monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])
@@ -278,11 +263,9 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
     data_dir = tmp_path / "data"
     config_dir = data_dir / "config"
     conf_dir = tmp_path / "conf"
-    secrets_dir = tmp_path / "secrets"
 
     config_dir.mkdir(parents=True, exist_ok=True)
     conf_dir.mkdir(parents=True, exist_ok=True)
-    secrets_dir.mkdir(parents=True, exist_ok=True)
 
     (conf_dir / "llm_models.yaml").write_text(
         "\n".join(
@@ -301,17 +284,13 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
         + "\n",
         encoding="utf-8",
     )
-    (secrets_dir / "chatgpt_api_key.txt").write_text("chatgpt-key\n", encoding="utf-8")
 
     settings = Settings(
         data_root=data_dir,
         config_root=config_dir,
         llm_models_file=conf_dir / "llm_models.yaml",
         ollama_timeout_seconds=77.0,
-        chatgpt_api_key_file=secrets_dir / "chatgpt_api_key.txt",
-        claude_api_key_file=secrets_dir / "claude_api_key.txt",
-        gemini_api_key_file=secrets_dir / "gemini_api_key.txt",
-        qwen_api_key_file=secrets_dir / "qwen_api_key.txt",
+        chatgpt_api_key="chatgpt-key",
     )
     registry = LlmRegistry(settings=settings)
     monkeypatch.setattr(registry, "list_local_models", lambda: ["phi3:mini"])

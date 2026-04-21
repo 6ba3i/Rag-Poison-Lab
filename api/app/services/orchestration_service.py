@@ -30,6 +30,8 @@ class ExperimentRunOptions:
     output_dir: Path | None
     es_url: str | None
     attack_config: Path | None
+    repeat_count: int
+    seed: int
 
 
 class ExperimentOrchestrator:
@@ -77,6 +79,8 @@ class ExperimentOrchestrator:
                 results_root=None,
                 overwrite=resolved_options.overwrite,
                 attack_config=resolved_options.attack_config,
+                repeat_count=resolved_options.repeat_count,
+                seed=resolved_options.seed,
             )
             result["eval"] = eval_summary
             effective_label = str(eval_summary.get("label") or effective_label)
@@ -123,6 +127,8 @@ def plan_experiment_run(*, options: ExperimentRunOptions) -> ExperimentRunOption
         output_dir=options.output_dir,
         es_url=options.es_url,
         attack_config=options.attack_config,
+        repeat_count=options.repeat_count,
+        seed=options.seed,
     )
 
 

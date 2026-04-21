@@ -34,6 +34,8 @@ def evaluate_run(
     settings: Settings | None = None,
     es_client: Any | None = None,
     attack_config: Path | None = None,
+    repeat_count: int = 1,
+    seed: int = 42,
 ) -> dict[str, Any]:
     return run_experiments(
         mode=mode,
@@ -46,6 +48,8 @@ def evaluate_run(
         results_root=results_root.resolve() if results_root is not None else None,
         allow_overwrite=overwrite,
         attack_config_path=attack_config.resolve() if attack_config is not None else None,
+        repeat_count=repeat_count,
+        seed=seed,
     )
 
 
@@ -71,6 +75,8 @@ def eval_run(
     k: int = typer.Option(10, min=1, help="Top-K cutoff for metrics"),
     user_id: int | None = typer.Option(None, help="User ID when mode=single"),
     batch_size: int = typer.Option(100, min=1, help="Number of users when mode=batch"),
+    repeat_count: int = typer.Option(1, min=1, help="Number of repeated evaluation runs"),
+    seed: int = typer.Option(42, min=0, help="Base random seed for repeated batch sampling"),
     results_root: Path | None = typer.Option(None, help="Override data/results/runs base path"),
     attack_config: Path | None = typer.Option(None, help="Path to attack config JSON"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Allow overwriting an existing run label"),
@@ -87,6 +93,8 @@ def eval_run(
             results_root=results_root,
             overwrite=overwrite,
             attack_config=attack_config,
+            repeat_count=repeat_count,
+            seed=seed,
         )
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Evaluation failed: {exc}")

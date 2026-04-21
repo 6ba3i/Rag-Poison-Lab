@@ -40,6 +40,7 @@ def trace(
         user_id=payload.user_id,
         mode=payload.mode,
         ranking_mode=trace_result["ranking_mode"],
+        retrieval_mode=trace_result.get("retrieval_mode", "lexical"),
         retrieval_query=str(trace_result["retrieval_query"]),
         retrieved_docs=trace_result["retrieved_docs"],
         rerank_candidates=trace_result.get("rerank_candidates"),
@@ -47,4 +48,5 @@ def trace(
         rerank_raw_response=trace_result.get("rerank_raw_response"),
         rerank_parsed_order=trace_result.get("rerank_parsed_order"),
         rerank_fallback=trace_result.get("rerank_fallback"),
+        retrieval_debug=trace_result.get("retrieval_debug"),
     )

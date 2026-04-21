@@ -1,11 +1,18 @@
-import type { RankingMode } from "../api/types";
+import type { RankingMode, RetrievalMode } from "../api/types";
 
 interface SettingsPanelProps {
   rankingMode: RankingMode;
+  retrievalMode: RetrievalMode;
   onRankingModeChange: (mode: RankingMode) => void;
+  onRetrievalModeChange: (mode: RetrievalMode) => void;
 }
 
-export function SettingsPanel({ rankingMode, onRankingModeChange }: SettingsPanelProps): JSX.Element {
+export function SettingsPanel({
+  rankingMode,
+  retrievalMode,
+  onRankingModeChange,
+  onRetrievalModeChange,
+}: SettingsPanelProps): JSX.Element {
   return (
     <section className="surface settings-section settings-section-accent">
       <h3 className="card-title">Ranking mode</h3>
@@ -39,6 +46,28 @@ export function SettingsPanel({ rankingMode, onRankingModeChange }: SettingsPane
           <span className="ranking-radio" aria-hidden="true" />
           LLM rerank
         </label>
+      </div>
+
+      <h3 className="card-title" style={{ marginTop: 20 }}>Retrieval mode</h3>
+      <p className="section-caption">
+        Lexical keeps the current BM25 path; dense uses the local hashed-vector corpus; hybrid fuses both rankings.
+      </p>
+
+      <div className="stack" style={{ marginTop: 16 }}>
+        {(["lexical", "dense", "hybrid"] as const).map((mode) => (
+          <label key={mode} className={["ranking-option", retrievalMode === mode ? "selected" : ""].join(" ")}>
+            <input
+              type="radio"
+              name="retrieval-mode"
+              value={mode}
+              checked={retrievalMode === mode}
+              onChange={() => onRetrievalModeChange(mode)}
+              className="ranking-option-input"
+            />
+            <span className="ranking-radio" aria-hidden="true" />
+            {mode}
+          </label>
+        ))}
       </div>
     </section>
   );

@@ -58,7 +58,7 @@ class LlmRegistry:
     def _provider_is_available(self, provider: str) -> bool:
         if provider == "local":
             return True
-        api_key, _ = resolve_api_key(provider_name=provider, settings=self.settings, warn_on_file_fallback=False)
+        api_key, _ = resolve_api_key(provider_name=provider, settings=self.settings)
         return api_key is not None
 
     def list_provider_options(self) -> list[LlmProviderOption]:
@@ -89,17 +89,12 @@ class LlmRegistry:
                 timeout=float(self.settings.ollama_timeout_seconds),
             )
 
-        secret_path = self.settings.provider_secret_paths.get(provider)
-        if secret_path is None:
-            raise KeyError(f"Missing secret path configuration for provider: {provider}")
-
         resolved_api_key, _ = resolve_api_key(provider_name=provider, settings=self.settings)
         resolved_base_url, _ = resolve_base_url(provider_name=provider, settings=self.settings)
         curated_models = self._load_cloud_models().get(provider, [])
         return provider_cls(
             model=model,
             api_key=resolved_api_key,
-            api_key_file=secret_path,
             curated_models=curated_models,
             base_url=resolved_base_url,
         )

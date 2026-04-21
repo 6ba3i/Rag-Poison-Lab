@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from api.app.settings import Settings
+from api.app.services.defense_service import apply_retrieval_defense, sanitize_candidates_for_prompt
 from api.app.services.users_service import UsersService
-from common.schemas.llm_config import LlmConfig, RankingMode, default_llm_config
+from common.schemas.defense_config import DefenseConfig, default_defense_config, load_defense_config
+from common.schemas.llm_config import LlmConfig, RankingMode, RetrievalMode, default_llm_config
 from rag.recsys.candidate_gen import (
     CandidateDoc,
     UserPreferenceContext,
@@ -16,10 +18,10 @@ from rag.recsys.candidate_gen import (
     build_retrieval_query,
     build_user_context,
     fallback_candidates_from_movies,
-    search_candidates,
 )
 from rag.recsys.explain import generate_explanations
 from rag.recsys.ranker import RankedCandidate, rank_candidates
+from rag.retrieval.es_client import retrieve_dense, retrieve_hybrid, retrieve_lexical
 
 INDEX_BY_MODE = {
     "baseline": "movies",
@@ -90,6 +92,17 @@ def load_llm_config(*, settings: Settings) -> LlmConfig:
         return default_llm_config()
 
 
+def load_defense_runtime_config(*, settings: Settings) -> DefenseConfig:
+    path = settings.resolved_defense_config_path
+    if not path.exists() or path.stat().st_size == 0:
+        return default_defense_config()
+    try:
+        return load_defense_config(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to parse defense config at %s: %s", path, exc)
+        return default_defense_config()
+
+
 def recommendation_retrieval_size(*, ranking_mode: RankingMode, k: int) -> int:
     if ranking_mode == "llm_rerank":
         return LLM_RERANK_CANDIDATE_LIMIT
@@ -109,6 +122,7 @@ def rank_candidates_for_mode(
     ranking_mode: RankingMode,
     k: int,
     llm_client: Any | None,
+    prompt_candidates: list[CandidateDoc] | None = None,
     log_victim_unavailable: bool = True,
 ) -> RankingResult:
     deterministic_ranked = rank_candidates(candidates=candidates, user_top_genres=context.top_genres, k=max(k, len(candidates)))
@@ -117,9 +131,11 @@ def rank_candidates_for_mode(
     if ranking_mode != "llm_rerank":
         return RankingResult(ranking_mode=ranking_mode, ranked=deterministic_top)
 
+    prompt_source = prompt_candidates if prompt_candidates is not None else candidates
     rerank_pool = _build_rerank_candidates(candidates[:LLM_RERANK_CANDIDATE_LIMIT])
+    prompt_pool = _build_rerank_candidates(prompt_source[:LLM_RERANK_CANDIDATE_LIMIT])
     trace_candidates = _to_trace_rerank_candidates(rerank_pool)
-    if not rerank_pool:
+    if not rerank_pool or not prompt_pool:
         logger.warning("LLM rerank fallback: empty candidate pool")
         return RankingResult(
             ranking_mode=ranking_mode,
@@ -128,7 +144,7 @@ def rank_candidates_for_mode(
             rerank_fallback=True,
         )
 
-    rerank_prompt = _build_rerank_prompt(context=context, rerank_pool=rerank_pool, k=k)
+    rerank_prompt = _build_rerank_prompt(context=context, rerank_pool=prompt_pool, k=k)
     trace_prompt = _truncate(rerank_prompt, RERANK_PROMPT_TRACE_MAX_CHARS)
 
     if llm_client is None:
@@ -161,7 +177,7 @@ def rank_candidates_for_mode(
             rerank_fallback=True,
         )
 
-    parsed_order = _parse_rerank_order(raw_response, candidate_count=len(rerank_pool))
+    parsed_order = _parse_rerank_order(raw_response, candidate_count=len(prompt_pool))
     if parsed_order is None:
         return RankingResult(
             ranking_mode=ranking_mode,
@@ -232,6 +248,7 @@ class RecsService:
         k: int,
         seen_history_split: Literal["all", "train"] = "all",
         strict_retrieval: bool = False,
+        defense_config_override: DefenseConfig | None = None,
     ) -> list[dict[str, Any]]:
         result = self._recommend_internal(
             user_id=user_id,
@@ -239,6 +256,7 @@ class RecsService:
             k=k,
             seen_history_split=seen_history_split,
             strict_retrieval=strict_retrieval,
+            defense_config_override=defense_config_override,
             include_debug=False,
         )
         return result["items"]
@@ -251,6 +269,7 @@ class RecsService:
         k: int,
         seen_history_split: Literal["all", "train"] = "all",
         strict_retrieval: bool = False,
+        defense_config_override: DefenseConfig | None = None,
     ) -> dict[str, Any]:
         return self._recommend_internal(
             user_id=user_id,
@@ -258,6 +277,7 @@ class RecsService:
             k=k,
             seen_history_split=seen_history_split,
             strict_retrieval=strict_retrieval,
+            defense_config_override=defense_config_override,
             include_debug=True,
         )
 
@@ -269,6 +289,7 @@ class RecsService:
         k: int,
         seen_history_split: Literal["all", "train"],
         strict_retrieval: bool,
+        defense_config_override: DefenseConfig | None,
         include_debug: bool,
     ) -> dict[str, Any]:
         users_service = UsersService(settings=self.settings)
@@ -280,6 +301,11 @@ class RecsService:
             raise ValueError("seen_history_split must be one of: all, train")
 
         llm_config = load_llm_config(settings=self.settings)
+        active_defense = (
+            defense_config_override
+            if mode == "attacked" and defense_config_override is not None and defense_config_override.enabled
+            else None
+        )
 
         history_all = users_service.get_history(user_id, split="all")
         history_train = users_service.get_history(user_id, split="train")
@@ -292,27 +318,32 @@ class RecsService:
         query_body = build_es_query(query_text=query_text, seen_movie_ids=seen_movie_ids)
 
         logger.info(
-            "recs_request phase=recommendation mode=%s user_id=%s k=%s ranking_mode=%s index_name=%s seen_history_split=%s strict_retrieval=%s query_text=%s",
+            "recs_request phase=recommendation mode=%s user_id=%s k=%s ranking_mode=%s retrieval_mode=%s index_name=%s seen_history_split=%s strict_retrieval=%s query_text=%s",
             mode,
             user_id,
             k,
             llm_config.ranking_mode,
+            llm_config.retrieval_mode,
             index_name,
             seen_history_split,
             strict_retrieval,
             query_text,
         )
 
-        candidates_from_es = search_candidates(
+        retrieval_result = _retrieve_candidates(
+            settings=self.settings,
             es_client=self.es_client,
             index_name=index_name,
+            retrieval_mode=llm_config.retrieval_mode,
             query_text=query_text,
             seen_movie_ids=seen_movie_ids,
             size=recommendation_retrieval_size(ranking_mode=llm_config.ranking_mode, k=k),
             strict=strict_retrieval,
             query_body=query_body,
         )
-        candidates = list(candidates_from_es)
+        defense_result = apply_retrieval_defense(candidates=retrieval_result.candidates, config=active_defense)
+        retrieval_candidates = list(defense_result.candidates)
+        candidates = list(retrieval_candidates)
 
         fallback_added = 0
         if len(candidates) < k:
@@ -331,6 +362,8 @@ class RecsService:
                 if len(candidates) >= k:
                     break
 
+        prompt_candidates, prompt_defense_debug = sanitize_candidates_for_prompt(candidates=candidates, config=active_defense)
+
         victim_client = self._get_victim_client()
         log_victim_unavailable = True
         if llm_config.ranking_mode == "llm_rerank" and victim_client is None:
@@ -343,25 +376,34 @@ class RecsService:
             ranking_mode=llm_config.ranking_mode,
             k=k,
             llm_client=victim_client,
+            prompt_candidates=prompt_candidates,
             log_victim_unavailable=log_victim_unavailable,
         )
         target_movie_ids = [item.movie_id for item in candidates]
-        target_payload_docs = [item.movie_id for item in candidates if item.poison_payload.strip()]
+        target_payload_docs = [item.movie_id for item in retrieval_candidates if item.poison_payload.strip()]
         logger.info(
-            "recs_candidates phase=recommendation mode=%s user_id=%s index_name=%s retrieved_from_es_count=%s fallback_added=%s candidate_ids=%s poison_payload_candidate_ids=%s",
+            "recs_candidates phase=recommendation mode=%s user_id=%s index_name=%s retrieved_count=%s fallback_added=%s candidate_ids=%s poison_payload_candidate_ids=%s defense_enabled=%s",
             mode,
             user_id,
             index_name,
-            len(candidates_from_es),
+            len(retrieval_result.candidates),
             fallback_added,
             target_movie_ids,
             target_payload_docs,
+            bool(active_defense is not None),
         )
 
+        prompt_candidate_by_id = {candidate.movie_id: candidate for candidate in prompt_candidates}
         explanations = generate_explanations(
             llm_client=victim_client,
             context=context,
-            ranked_candidates=ranking.ranked,
+            ranked_candidates=[
+                RankedCandidate(
+                    candidate=prompt_candidate_by_id.get(item.candidate.movie_id, item.candidate),
+                    score=item.score,
+                )
+                for item in ranking.ranked
+            ],
         )
 
         output: list[dict[str, Any]] = []
@@ -381,13 +423,21 @@ class RecsService:
         if include_debug:
             debug = {
                 "index_name": index_name,
+                "retrieval_mode": llm_config.retrieval_mode,
                 "retrieval_query": query_text,
                 "retrieval_query_body": query_body,
-                "retrieved_from_es_count": len(candidates_from_es),
-                "retrieved_from_es": [_candidate_debug(item) for item in candidates_from_es[:DEBUG_CANDIDATE_LIMIT]],
-                "retrieved_from_es_movie_ids": [int(item.movie_id) for item in candidates_from_es],
-                "retrieved_from_es_scores": [round(float(item.bm25_score), 6) for item in candidates_from_es],
-                "retrieved_from_es_poisoned_movie_ids": [int(item.movie_id) for item in candidates_from_es if item.poison_marker],
+                "retrieved_from_es_count": len(retrieval_candidates),
+                "retrieved_from_es": [_candidate_debug(item) for item in retrieval_candidates[:DEBUG_CANDIDATE_LIMIT]],
+                "retrieved_from_es_movie_ids": [int(item.movie_id) for item in retrieval_candidates],
+                "retrieved_from_es_scores": [round(float(item.bm25_score), 6) for item in retrieval_candidates],
+                "retrieved_from_es_poisoned_movie_ids": [int(item.movie_id) for item in retrieval_candidates if item.poison_marker],
+                "retrieval_raw_movie_ids": [int(item.movie_id) for item in retrieval_result.candidates],
+                "retrieval_debug": retrieval_result.debug,
+                "defense": {
+                    "enabled": bool(active_defense is not None),
+                    "retrieval": defense_result.debug,
+                    "prompt": prompt_defense_debug,
+                },
                 "fallback_used": bool(fallback_added > 0),
                 "fallback_added": int(fallback_added),
                 "ranking_input_candidates": [_candidate_debug(item) for item in candidates[:DEBUG_CANDIDATE_LIMIT]],
@@ -566,3 +616,45 @@ def _candidate_debug(candidate: CandidateDoc) -> dict[str, Any]:
         "poison_payload_snippet": _truncate(candidate.poison_payload.strip(), RERANK_PAYLOAD_MAX_CHARS),
         "synopsis_snippet": _truncate(candidate.synopsis.strip(), RERANK_SYNOPSIS_MAX_CHARS),
     }
+
+
+def _retrieve_candidates(
+    *,
+    settings: Settings,
+    es_client: Any,
+    index_name: str,
+    retrieval_mode: RetrievalMode,
+    query_text: str,
+    seen_movie_ids: set[int],
+    size: int,
+    strict: bool,
+    query_body: dict[str, Any],
+) -> Any:
+    if retrieval_mode == "dense":
+        return retrieve_dense(
+            processed_dir=settings.resolved_processed_dir,
+            index_name=index_name,
+            query_text=query_text,
+            seen_movie_ids=seen_movie_ids,
+            size=size,
+        )
+    if retrieval_mode == "hybrid":
+        return retrieve_hybrid(
+            es_client=es_client,
+            processed_dir=settings.resolved_processed_dir,
+            index_name=index_name,
+            query_text=query_text,
+            seen_movie_ids=seen_movie_ids,
+            size=size,
+            strict=strict,
+            query_body=query_body,
+        )
+    return retrieve_lexical(
+        es_client=es_client,
+        index_name=index_name,
+        query_text=query_text,
+        seen_movie_ids=seen_movie_ids,
+        size=size,
+        strict=strict,
+        query_body=query_body,
+    )

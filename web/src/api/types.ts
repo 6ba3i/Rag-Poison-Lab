@@ -2,6 +2,8 @@ export type RecommendationMode = "baseline" | "attacked";
 export type HistorySplit = "train" | "all";
 export type ProviderName = "local" | "chatgpt" | "claude" | "gemini" | "qwen";
 export type RankingMode = "deterministic" | "llm_rerank";
+export type RetrievalMode = "lexical" | "dense" | "hybrid";
+export type DefenseSuspicionMode = "filter" | "penalize";
 
 export interface UserSummary {
   user_id: number;
@@ -53,6 +55,7 @@ export interface TraceResponse {
   user_id: number;
   mode: RecommendationMode;
   ranking_mode: RankingMode;
+  retrieval_mode: RetrievalMode;
   retrieval_query: string;
   retrieved_docs: TraceDoc[];
   rerank_candidates?: TraceRerankCandidate[] | null;
@@ -60,6 +63,7 @@ export interface TraceResponse {
   rerank_raw_response?: string | null;
   rerank_parsed_order?: number[] | null;
   rerank_fallback?: boolean | null;
+  retrieval_debug?: Record<string, unknown> | null;
 }
 
 export interface TraceRerankCandidate {
@@ -79,6 +83,7 @@ export interface LlmConfig {
   victim: LlmRoleConfig;
   attacker: LlmRoleConfig;
   ranking_mode: RankingMode;
+  retrieval_mode: RetrievalMode;
 }
 
 export interface LlmProviderOption {
@@ -107,6 +112,8 @@ export interface ExperimentRunRequest {
   output_dir?: string | null;
   es_url?: string | null;
   attack_config?: string | null;
+  repeat_count?: number;
+  seed?: number;
 }
 
 export interface ExperimentRunResponse {
@@ -136,6 +143,66 @@ export interface AttackSettingsResponse {
   config_sha256: string | null;
 }
 
+export interface AttackSettingsRequest {
+  attack_type: AttackType;
+  poison_fraction: number;
+  target_movie_id: number | null;
+  payload_text: string;
+  keyword_list: string[];
+  target_boost_policy: TargetBoostPolicy;
+  target_boost_strength: number;
+  target_fields: TargetBoostField[];
+}
+
+export interface DefenseSettingsRequest {
+  enabled: boolean;
+  retrieval_guard_enabled: boolean;
+  retrieval_suspicion_mode: DefenseSuspicionMode;
+  retrieval_penalty_weight: number;
+  rerank_sanitization_enabled: boolean;
+  suspicious_patterns: string[];
+}
+
+export interface DefenseSettingsResponse extends DefenseSettingsRequest {
+  config_path: string;
+  config_exists: boolean;
+  config_sha256: string | null;
+}
+
+export interface MetricStats {
+  count: number;
+  mean: number;
+  stddev: number;
+  stderr: number;
+  ci95_low: number | null;
+  ci95_high: number | null;
+}
+
+export interface MetricComparisonSignificance {
+  count: number;
+  positive: number;
+  negative: number;
+  ties: number;
+  p_value: number | null;
+  method: string;
+  direction: string | null;
+}
+
+export interface RepeatStatsSection {
+  metrics: Record<string, MetricStats>;
+  significance: Record<string, MetricComparisonSignificance>;
+}
+
+export interface RepeatStatsResponse {
+  repeat_count: number;
+  seed: number;
+  baseline?: RepeatStatsSection | null;
+  attacked?: RepeatStatsSection | null;
+  delta?: RepeatStatsSection | null;
+  defended?: RepeatStatsSection | null;
+  defense_delta?: RepeatStatsSection | null;
+}
+
 export interface RunSummary {
   label: string;
   generated_at_utc: string | null;
@@ -148,7 +215,10 @@ export interface RunSummary {
   baseline: Record<string, number>;
   attacked: Record<string, number>;
   delta: Record<string, number>;
+  defended: Record<string, number>;
+  defense_delta: Record<string, number>;
   warnings_count: number;
+  repeat_count: number;
   has_metrics: boolean;
   has_manifest: boolean;
   has_attack_trace: boolean;
@@ -171,8 +241,10 @@ export interface RunArtifacts {
   delta_csv_path: string | null;
   llm_runtime_path: string | null;
   attack_runtime_path: string | null;
+  defense_runtime_path: string | null;
   llm_snapshot_path: string | null;
   attack_snapshot_path: string | null;
+  defense_snapshot_path: string | null;
 }
 
 export interface RunDetailResponse {
@@ -180,6 +252,7 @@ export interface RunDetailResponse {
   warnings: string[];
   metadata: Record<string, unknown> | null;
   target_retrieval: Record<string, unknown> | null;
+  repeat_stats: RepeatStatsResponse | null;
   per_user: Record<string, unknown>[];
   manifest: Record<string, unknown> | null;
   artifacts: RunArtifacts;

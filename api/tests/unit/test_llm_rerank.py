@@ -252,14 +252,10 @@ def rerank_api_client(tmp_path: Path) -> TestClient:
     config_dir = data_dir / "config"
     static_dir = tmp_path / "static"
     conf_dir = tmp_path / "conf"
-    secrets_dir = tmp_path / "secrets"
-
     processed_dir.mkdir(parents=True, exist_ok=True)
     config_dir.mkdir(parents=True, exist_ok=True)
     static_dir.mkdir(parents=True, exist_ok=True)
     conf_dir.mkdir(parents=True, exist_ok=True)
-    secrets_dir.mkdir(parents=True, exist_ok=True)
-
     pd.DataFrame(
         [
             {"movie_id": 1, "title": "Seen 1", "genres": ["Action"]},
@@ -300,10 +296,6 @@ def rerank_api_client(tmp_path: Path) -> TestClient:
         processed_root=processed_dir,
         static_root=static_dir,
         llm_models_file=conf_dir / "llm_models.yaml",
-        chatgpt_api_key_file=secrets_dir / "chatgpt_api_key.txt",
-        claude_api_key_file=secrets_dir / "claude_api_key.txt",
-        gemini_api_key_file=secrets_dir / "gemini_api_key.txt",
-        qwen_api_key_file=secrets_dir / "qwen_api_key.txt",
     )
 
     test_settings.resolved_llm_config_path.write_text(

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from api.app.llm.base import LlmProvider, ProviderStatus, read_secret_text
+from api.app.llm.base import LlmProvider, ProviderStatus
+from api.app.llm.gemini_client import GeminiClient
 
 
 class GeminiProvider(LlmProvider):
@@ -14,15 +14,15 @@ class GeminiProvider(LlmProvider):
         *,
         model: str,
         api_key: str | None = None,
-        api_key_file: Path | None = None,
         curated_models: list[str],
         base_url: str | None = None,
+        timeout: float = 30.0,
     ) -> None:
         super().__init__(model=model)
         self.api_key = api_key.strip() if api_key is not None else None
-        self.api_key_file = api_key_file
         self.curated_models = curated_models
-        self.base_url = (base_url or "").strip() or None
+        self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").strip() or "https://generativelanguage.googleapis.com/v1beta"
+        self.timeout = timeout
 
     def generate(
         self,
@@ -35,23 +35,24 @@ class GeminiProvider(LlmProvider):
     ) -> str:
         api_key = self._resolve_api_key()
         if api_key is None:
-            raise RuntimeError("Gemini provider is unavailable: missing API key (env or secret file)")
-        raise NotImplementedError("Gemini provider generate() is not implemented in MVP task 08")
+            raise RuntimeError("Gemini provider is unavailable: missing API key environment configuration")
+        client = GeminiClient(base_url=self.base_url, api_key=api_key, timeout=self.timeout)
+        return client.generate(
+            model=self.model,
+            prompt=prompt,
+            system=system,
+            json_schema=json_schema,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     def healthcheck(self) -> ProviderStatus:
         available = self._resolve_api_key() is not None
-        if not available:
-            return ProviderStatus(
-                provider=self.provider_name,
-                available=False,
-                healthy=False,
-                message="Missing API key (env or secret file)",
-            )
         return ProviderStatus(
             provider=self.provider_name,
-            available=True,
-            healthy=False,
-            message="Provider is selectable but generation is not implemented in MVP task 08",
+            available=available,
+            healthy=available,
+            message="" if available else "Missing API key environment configuration",
         )
 
     def list_models(self) -> list[str]:
@@ -62,6 +63,4 @@ class GeminiProvider(LlmProvider):
     def _resolve_api_key(self) -> str | None:
         if self.api_key is not None and self.api_key != "":
             return self.api_key
-        if self.api_key_file is None:
-            return None
-        return read_secret_text(self.api_key_file)
+        return None

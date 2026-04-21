@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from common.schemas.attack_config import AttackConfig, default_attack_config, load_attack_config
+from common.schemas.defense_config import DefenseConfig, default_defense_config, load_defense_config
 from common.schemas.llm_config import LlmConfig
 
 
@@ -31,6 +32,18 @@ def test_llm_config_accepts_llm_rerank_mode() -> None:
         }
     )
     assert config.ranking_mode == "llm_rerank"
+    assert config.retrieval_mode == "lexical"
+
+
+def test_llm_config_accepts_retrieval_mode() -> None:
+    config = LlmConfig.model_validate(
+        {
+            "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+            "retrieval_mode": "hybrid",
+        }
+    )
+    assert config.retrieval_mode == "hybrid"
 
 
 def test_llm_config_rejects_invalid_provider_and_empty_model() -> None:
@@ -56,6 +69,15 @@ def test_llm_config_rejects_invalid_provider_and_empty_model() -> None:
                 "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
                 "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
                 "ranking_mode": "invalid",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        LlmConfig.model_validate(
+            {
+                "victim": {"provider": "local", "model": "qwen2.5:1.5b"},
+                "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
+                "retrieval_mode": "invalid",
             }
         )
 
@@ -123,3 +145,33 @@ def test_load_attack_config_invalid_json_and_non_object_raise(tmp_path: Path) ->
     non_object_path.write_text("[]", encoding="utf-8")
     with pytest.raises(ValueError, match="must be a JSON object"):
         load_attack_config(non_object_path)
+
+
+def test_defense_config_defaults_and_roundtrip(tmp_path: Path) -> None:
+    config = default_defense_config()
+    assert config.enabled is False
+    assert config.retrieval_suspicion_mode == "filter"
+
+    config_path = tmp_path / "defense_config.json"
+    config_path.write_text(
+        '{"enabled":true,"retrieval_guard_enabled":true,"retrieval_suspicion_mode":"penalize","retrieval_penalty_weight":0.25,"rerank_sanitization_enabled":true,"suspicious_patterns":[" ignore prior rules ","ignore prior rules"]}',
+        encoding="utf-8",
+    )
+
+    loaded = load_defense_config(config_path)
+    assert loaded.enabled is True
+    assert loaded.retrieval_suspicion_mode == "penalize"
+    assert loaded.suspicious_patterns == ["ignore prior rules"]
+
+
+def test_defense_config_rejects_invalid_values(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        DefenseConfig.model_validate({"retrieval_penalty_weight": 1.5})
+
+    with pytest.raises(ValidationError):
+        DefenseConfig.model_validate({"retrieval_suspicion_mode": "invalid"})
+
+    invalid_json_path = tmp_path / "invalid_defense.json"
+    invalid_json_path.write_text("{bad", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        load_defense_config(invalid_json_path)

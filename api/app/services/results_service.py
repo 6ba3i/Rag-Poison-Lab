@@ -53,6 +53,7 @@ def get_run_detail(*, settings: Settings, label: str) -> dict[str, Any]:
         "warnings": warnings,
         "metadata": metrics.get("metadata") if isinstance(metrics.get("metadata"), dict) else None,
         "target_retrieval": metrics.get("target_retrieval") if isinstance(metrics.get("target_retrieval"), dict) else None,
+        "repeat_stats": metrics.get("repeat_stats") if isinstance(metrics.get("repeat_stats"), dict) else None,
         "per_user": per_user,
         "manifest": manifest if manifest else None,
         "artifacts": _artifact_paths(run_dir=run_dir),
@@ -110,7 +111,14 @@ def _build_run_summary(
         "baseline": _to_metric_map(metrics_payload.get("baseline")),
         "attacked": _to_metric_map(metrics_payload.get("attacked")),
         "delta": _to_metric_map(metrics_payload.get("delta")),
+        "defended": _to_metric_map(metrics_payload.get("defended")),
+        "defense_delta": _to_metric_map(metrics_payload.get("defense_delta")),
         "warnings_count": _warnings_count(metrics_payload),
+        "repeat_count": _first_int(
+            _nested(metrics_payload, "metadata", "repeat_count"),
+            manifest_payload.get("repeat_count"),
+        )
+        or 1,
         "has_metrics": (run_dir / "metrics.json").exists(),
         "has_manifest": (run_dir / "experiment_manifest.json").exists(),
         "has_attack_trace": (run_dir / "attack_trace.json").exists(),
@@ -161,8 +169,10 @@ def _artifact_paths(*, run_dir: Path) -> dict[str, str | None]:
         "delta_csv_path": _existing_path(run_dir / "delta.csv"),
         "llm_runtime_path": _existing_path(run_dir / "llm_config.runtime.json"),
         "attack_runtime_path": _existing_path(run_dir / "attack_config.runtime.json"),
+        "defense_runtime_path": _existing_path(run_dir / "defense_config.runtime.json"),
         "llm_snapshot_path": _existing_path(run_dir / "llm_config.snapshot.json"),
         "attack_snapshot_path": _existing_path(run_dir / "attack_config.snapshot.json"),
+        "defense_snapshot_path": _existing_path(run_dir / "defense_config.snapshot.json"),
     }
 
 

@@ -27,7 +27,7 @@ Optional shared transit config:
 - `OPENAI_COMPAT_BASE_URL`
 - `OPENAI_COMPAT_API_KEY`
 
-Legacy fallback (deprecated): provider secret files under `./secrets/` are still supported for one deprecation cycle via `*_API_KEY_FILE`.
+Provider keys are read from `.env` / `.env.key`; `./secrets/` files are no longer used.
 
 ## Start the Stack
 

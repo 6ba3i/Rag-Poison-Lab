@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 ProviderName = Literal["local", "chatgpt", "claude", "gemini", "qwen"]
 RankingMode = Literal["deterministic", "llm_rerank"]
+RetrievalMode = Literal["lexical", "dense", "hybrid"]
 
 
 class LlmRoleConfig(BaseModel):
@@ -25,6 +26,7 @@ class LlmConfig(BaseModel):
     victim: LlmRoleConfig
     attacker: LlmRoleConfig
     ranking_mode: RankingMode = "deterministic"
+    retrieval_mode: RetrievalMode = "lexical"
 
 
 def default_llm_config() -> LlmConfig:
@@ -32,4 +34,5 @@ def default_llm_config() -> LlmConfig:
         victim=LlmRoleConfig(provider="local", model="qwen2.5:1.5b"),
         attacker=LlmRoleConfig(provider="local", model="qwen2.5:1.5b"),
         ranking_mode="deterministic",
+        retrieval_mode="lexical",
     )

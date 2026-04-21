@@ -30,6 +30,8 @@ def experiment_run(
     k: int = typer.Option(10, min=1, help="Top-K cutoff for metrics"),
     user_id: int | None = typer.Option(None, help="User ID when mode=single"),
     batch_size: int = typer.Option(100, min=1, help="Number of users when mode=batch"),
+    repeat_count: int = typer.Option(1, min=1, help="Number of repeated evaluation runs"),
+    seed: int = typer.Option(42, min=0, help="Base random seed for repeated runs"),
     run_prepare: bool | None = typer.Option(None, help="Override: run data prepare before indexing"),
     run_index: bool | None = typer.Option(None, help="Override: run baseline+poisoned indexing"),
     run_eval: bool | None = typer.Option(None, help="Override: run evaluation"),
@@ -58,6 +60,8 @@ def experiment_run(
             output_dir=output_dir.resolve() if output_dir is not None else None,
             es_url=es_url,
             attack_config=attack_config.resolve() if attack_config is not None else None,
+            repeat_count=repeat_count,
+            seed=seed,
         )
     )
     _print_summary(summary)

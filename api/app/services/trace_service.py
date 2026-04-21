@@ -5,13 +5,14 @@ from typing import Any
 
 from api.app.services.recs_service import (
     INDEX_BY_MODE,
+    _retrieve_candidates,
     load_llm_config,
     rank_candidates_for_mode,
     trace_retrieval_size,
 )
 from api.app.services.users_service import UsersService
 from api.app.settings import Settings
-from rag.recsys.candidate_gen import build_es_query, build_retrieval_query, build_user_context, search_candidates
+from rag.recsys.candidate_gen import build_es_query, build_retrieval_query, build_user_context
 from rag.trace.trace_builder import build_trace_docs, fallback_trace_docs_from_movies
 
 logger = logging.getLogger(__name__)
@@ -40,21 +41,26 @@ class TraceService:
         index_name = INDEX_BY_MODE.get(mode, "movies")
         query_body = build_es_query(query_text=query_text, seen_movie_ids=seen_movie_ids)
 
-        candidates = search_candidates(
+        retrieval_result = _retrieve_candidates(
+            settings=self.settings,
             es_client=self.es_client,
             index_name=index_name,
+            retrieval_mode=llm_config.retrieval_mode,
             query_text=query_text,
             seen_movie_ids=seen_movie_ids,
             size=trace_retrieval_size(ranking_mode=llm_config.ranking_mode, k_retrieval=k_retrieval),
+            strict=False,
             query_body=query_body,
         )
+        candidates = retrieval_result.candidates
         logger.info(
-            "trace_request phase=trace mode=%s user_id=%s index_name=%s k_retrieval=%s ranking_mode=%s query_text=%s",
+            "trace_request phase=trace mode=%s user_id=%s index_name=%s k_retrieval=%s ranking_mode=%s retrieval_mode=%s query_text=%s",
             mode,
             user_id,
             index_name,
             k_retrieval,
             llm_config.ranking_mode,
+            llm_config.retrieval_mode,
             query_text,
         )
 
@@ -74,6 +80,7 @@ class TraceService:
                 ranking_mode=llm_config.ranking_mode,
                 k=max(1, min(10, len(candidates))),
                 llm_client=self._get_victim_client(),
+                prompt_candidates=candidates,
             )
         else:
             ranking = rank_candidates_for_mode(
@@ -86,6 +93,7 @@ class TraceService:
 
         return {
             "ranking_mode": llm_config.ranking_mode,
+            "retrieval_mode": llm_config.retrieval_mode,
             "retrieval_query": query_text,
             "retrieval_query_body": query_body,
             "retrieved_docs": docs,
@@ -94,6 +102,7 @@ class TraceService:
             "rerank_raw_response": ranking.rerank_raw_response,
             "rerank_parsed_order": ranking.rerank_parsed_order,
             "rerank_fallback": ranking.rerank_fallback,
+            "retrieval_debug": retrieval_result.debug,
         }
 
     def _get_victim_client(self) -> Any | None:
