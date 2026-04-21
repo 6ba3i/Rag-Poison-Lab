@@ -7,6 +7,7 @@ from api.app.cli.commands_data import data_app
 from api.app.cli.commands_eval import eval_app
 from api.app.cli.commands_experiment import experiment_app
 from api.app.cli.commands_index import index_app
+from api.app.cli.commands_llm import llm_app
 from api.app.cli.commands_report import report_app
 from api.app.cli.wizard import run_wizard
 from api.app.common.log import configure_logging
@@ -19,6 +20,7 @@ app.add_typer(index_app, name="index")
 app.add_typer(eval_app, name="eval")
 app.add_typer(report_app, name="report")
 app.add_typer(experiment_app, name="experiment")
+app.add_typer(llm_app, name="llm")
 
 
 @app.command("wizard")

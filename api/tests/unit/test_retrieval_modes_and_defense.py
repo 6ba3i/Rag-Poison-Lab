@@ -61,7 +61,7 @@ def test_dense_and_hybrid_retrieval_modes_use_processed_corpus(tmp_path: Path) -
             {"movie_id": "5", "title": "Quiet Drama", "genres": ["Drama"], "synopsis": "Slow character study"},
         ],
     )
-    settings = Settings(processed_root=processed_dir)
+    settings = Settings(_env_file=None, processed_root=processed_dir)
 
     dense = _retrieve_candidates(
         settings=settings,

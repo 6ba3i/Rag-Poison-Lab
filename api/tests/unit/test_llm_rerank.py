@@ -291,6 +291,7 @@ def rerank_api_client(tmp_path: Path) -> TestClient:
     (static_dir / "index.html").write_text("<html><body>ok</body></html>", encoding="utf-8")
 
     test_settings = Settings(
+        _env_file=None,
         data_root=data_dir,
         config_root=config_dir,
         processed_root=processed_dir,

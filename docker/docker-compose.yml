@@ -70,6 +70,11 @@ services:
       context: ..
       dockerfile: Dockerfile
     image: ragpoison:dev
+    env_file:
+      - path: ../.env
+        required: false
+      - path: ../.env.key
+        required: false
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -85,16 +90,6 @@ services:
     environment:
       ELASTICSEARCH_URL: http://elasticsearch:9200
       OLLAMA_BASE_URL: http://ollama:11434
-      OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-}
-      OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-}
-      CHATGPT_BASE_URL: ${CHATGPT_BASE_URL:-}
-      CHATGPT_API_KEY: ${CHATGPT_API_KEY:-}
-      CLAUDE_BASE_URL: ${CLAUDE_BASE_URL:-}
-      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
-      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      QWEN_BASE_URL: ${QWEN_BASE_URL:-}
-      QWEN_API_KEY: ${QWEN_API_KEY:-}
     healthcheck:
       test:
         [

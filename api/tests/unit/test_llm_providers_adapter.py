@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from api.app.llm import anthropic_client, gemini_client, local_ollama, openai_compatible
+from api.app.llm import anthropic_client, gemini_client, local_ollama, openai_compatible, openai_responses_client
 from api.app.llm.local_ollama import LocalOllamaProvider
 from api.app.llm.providers_chatgpt import ChatGptProvider
 from api.app.llm.providers_claude import ClaudeProvider
@@ -35,7 +35,7 @@ def _build_settings_for_registry(tmp_path: Path, **overrides: object) -> Setting
 
     config_dir.mkdir(parents=True, exist_ok=True)
     conf_dir.mkdir(parents=True, exist_ok=True)
-    (conf_dir / "llm_models.yaml").write_text("chatgpt:\n  - gpt-4o-mini\n", encoding="utf-8")
+    (conf_dir / "llm_models.yaml").write_text("chatgpt:\n  - gpt-5.4-mini\n", encoding="utf-8")
 
     defaults: dict[str, object] = {
         "data_root": data_dir,
@@ -43,7 +43,7 @@ def _build_settings_for_registry(tmp_path: Path, **overrides: object) -> Setting
         "llm_models_file": conf_dir / "llm_models.yaml",
     }
     defaults.update(overrides)
-    return Settings(**defaults)
+    return Settings(_env_file=None, **defaults)
 
 
 def test_local_ollama_provider_health_list_and_generate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -101,19 +101,19 @@ def test_chatgpt_provider_generate_with_api_key(monkeypatch: pytest.MonkeyPatch)
         captured["headers"] = headers
         captured["json"] = json
         captured["timeout"] = timeout
-        return FakeResponse(200, {"choices": [{"message": {"content": "chatgpt output"}}]})
+        return FakeResponse(200, {"output_text": "chatgpt output"})
 
-    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    monkeypatch.setattr(openai_responses_client.httpx, "post", fake_post)
 
     provider = ChatGptProvider(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         api_key="test-openai-key",
-        curated_models=["gpt-4o", "gpt-4o-mini"],
+        curated_models=["gpt-5.4", "gpt-5.4-mini"],
     )
     text = provider.generate(prompt="hello", system="be brief")
 
     assert text == "chatgpt output"
-    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert captured["url"] == "https://api.openai.com/v1/responses"
     assert captured["timeout"] == 30.0
 
     headers = captured["headers"]
@@ -122,12 +122,15 @@ def test_chatgpt_provider_generate_with_api_key(monkeypatch: pytest.MonkeyPatch)
 
     payload = captured["json"]
     assert isinstance(payload, dict)
-    assert payload["model"] == "gpt-4o-mini"
-    assert provider.list_models() == ["gpt-4o", "gpt-4o-mini"]
+    assert payload["model"] == "gpt-5.4-mini"
+    assert payload["input"] == "hello"
+    assert payload["instructions"] == "be brief"
+    assert payload["max_output_tokens"] == 512
+    assert provider.list_models() == ["gpt-5.4", "gpt-5.4-mini"]
     assert provider.healthcheck().available is True
 
 def test_cloud_provider_missing_key_healthcheck() -> None:
-    chatgpt = ChatGptProvider(model="gpt-4o", curated_models=[])
+    chatgpt = ChatGptProvider(model="gpt-5.4", curated_models=[])
     status = chatgpt.healthcheck()
     assert status.available is False
     with pytest.raises(RuntimeError, match="missing API key"):
@@ -217,14 +220,14 @@ def test_registry_chatgpt_env_only_key(monkeypatch: pytest.MonkeyPatch, tmp_path
         captured["headers"] = headers
         captured["json"] = json
         captured["timeout"] = timeout
-        return FakeResponse(200, {"choices": [{"message": {"content": "env output"}}]})
+        return FakeResponse(200, {"output_text": "env output"})
 
-    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    monkeypatch.setattr(openai_responses_client.httpx, "post", fake_post)
 
     options = {item.provider: item for item in registry.list_provider_options()}
     assert options["chatgpt"].available is True
 
-    client = registry.get_provider_client(provider="chatgpt", model="gpt-4o-mini")
+    client = registry.get_provider_client(provider="chatgpt", model="gpt-5.4-mini")
     text = client.generate(prompt="hello")
     assert text == "env output"
     headers = captured["headers"]
@@ -245,15 +248,15 @@ def test_registry_chatgpt_uses_shared_openai_compat_key(monkeypatch: pytest.Monk
     def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
         captured["url"] = url
         captured["headers"] = headers
-        return FakeResponse(200, {"choices": [{"message": {"content": "shared output"}}]})
+        return FakeResponse(200, {"output_text": "shared output"})
 
-    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    monkeypatch.setattr(openai_responses_client.httpx, "post", fake_post)
 
-    client = registry.get_provider_client(provider="chatgpt", model="gpt-4o-mini")
+    client = registry.get_provider_client(provider="chatgpt", model="gpt-5.4-mini")
     output = client.generate(prompt="hello")
     assert output == "shared output"
 
-    assert captured["url"] == "https://gateway.example/v1/chat/completions"
+    assert captured["url"] == "https://gateway.example/v1/responses"
     headers = captured["headers"]
     assert isinstance(headers, dict)
     assert headers["Authorization"] == "Bearer shared-transit-key"
@@ -271,14 +274,14 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
         "\n".join(
             [
                 "chatgpt:",
-                "  - gpt-4o",
-                "  - gpt-4o-mini",
+                "  - gpt-5.4",
+                "  - gpt-5.4-mini",
                 "claude:",
-                "  - claude-3-5-haiku",
+                "  - claude-opus-4-7",
                 "gemini:",
-                "  - gemini-2.0-flash",
+                "  - gemini-2.5-flash",
                 "qwen:",
-                "  - qwen-plus",
+                "  - qwen3.6-plus",
             ]
         )
         + "\n",
@@ -286,6 +289,7 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
     )
 
     settings = Settings(
+        _env_file=None,
         data_root=data_dir,
         config_root=config_dir,
         llm_models_file=conf_dir / "llm_models.yaml",
@@ -299,11 +303,11 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
     assert options["local"].available is True
     assert options["chatgpt"].available is True
     assert options["claude"].available is False
-    assert options["chatgpt"].models == ["gpt-4o", "gpt-4o-mini"]
+    assert options["chatgpt"].models == ["gpt-5.4", "gpt-5.4-mini"]
 
     first_config = {
         "victim": {"provider": "local", "model": "phi3:mini"},
-        "attacker": {"provider": "chatgpt", "model": "gpt-4o"},
+        "attacker": {"provider": "chatgpt", "model": "gpt-5.4"},
     }
     settings.resolved_llm_config_path.write_text(json.dumps(first_config), encoding="utf-8")
 
@@ -313,10 +317,10 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
     assert victim_client.model == "phi3:mini"
     assert getattr(victim_client, "timeout", None) == 77.0
     assert attacker_client.provider_name == "chatgpt"
-    assert attacker_client.model == "gpt-4o"
+    assert attacker_client.model == "gpt-5.4"
 
     second_config = {
-        "victim": {"provider": "chatgpt", "model": "gpt-4o-mini"},
+        "victim": {"provider": "chatgpt", "model": "gpt-5.4-mini"},
         "attacker": {"provider": "local", "model": "qwen2.5:1.5b"},
     }
     settings.resolved_llm_config_path.write_text(json.dumps(second_config), encoding="utf-8")
@@ -324,7 +328,7 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
     victim_client_after = registry.get_victim_client()
     attacker_client_after = registry.get_attacker_client()
     assert victim_client_after.provider_name == "chatgpt"
-    assert victim_client_after.model == "gpt-4o-mini"
+    assert victim_client_after.model == "gpt-5.4-mini"
     assert attacker_client_after.provider_name == "local"
     assert attacker_client_after.model == "qwen2.5:1.5b"
     assert getattr(attacker_client_after, "timeout", None) == 77.0

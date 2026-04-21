@@ -398,7 +398,7 @@ def test_default_attack_config_path_uses_settings_resolved_config_dir(monkeypatc
     monkeypatch.setattr(
         poison_builder_module,
         "get_settings",
-        lambda: Settings(data_root=data_root, config_root=None),
+        lambda: Settings(_env_file=None, data_root=data_root, config_root=None),
     )
 
     summary = build_poisoned_bulk(processed_dir=processed_dir, attack_config_path=None)
@@ -427,7 +427,7 @@ def test_custom_config_root_attack_config_path_uses_settings_config_root(
     monkeypatch.setattr(
         poison_builder_module,
         "get_settings",
-        lambda: Settings(config_root=config_root),
+        lambda: Settings(_env_file=None, config_root=config_root),
     )
 
     summary = build_poisoned_bulk(processed_dir=processed_dir, attack_config_path=None)

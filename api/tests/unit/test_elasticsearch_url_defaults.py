@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from api.app import settings as settings_module
 from api.app.services import indexing_service
 from api.app.settings import Settings, get_es_client
 
@@ -41,6 +42,55 @@ def test_settings_elasticsearch_external_options_parse(monkeypatch: pytest.Monke
     assert settings.ollama_timeout_seconds == 75.0
 
 
+def test_settings_default_env_files_are_repo_root_anchored() -> None:
+    env_files = Settings.model_config.get("env_file")
+    assert env_files == (
+        settings_module._REPO_ROOT / ".env",
+        settings_module._REPO_ROOT / ".env.key",
+    )
+
+
+def test_settings_env_file_loading_is_independent_of_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_dir = tmp_path / "env-root"
+    work_dir = tmp_path / "nested"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (env_dir / ".env").write_text("CHATGPT_API_KEY=from-env\n", encoding="utf-8")
+    (env_dir / ".env.key").write_text("CHATGPT_API_KEY=from-key\n", encoding="utf-8")
+
+    original_env_file = Settings.model_config.get("env_file")
+    Settings.model_config["env_file"] = (env_dir / ".env", env_dir / ".env.key")
+
+    monkeypatch.delenv("CHATGPT_API_KEY", raising=False)
+    monkeypatch.chdir(work_dir)
+
+    try:
+        settings = Settings()
+    finally:
+        Settings.model_config["env_file"] = original_env_file
+
+    assert settings.chatgpt_api_key == "from-key"
+
+
+def test_settings_process_env_overrides_repo_env_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_dir = tmp_path / "env-root"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    (env_dir / ".env").write_text("CHATGPT_API_KEY=from-env\n", encoding="utf-8")
+    (env_dir / ".env.key").write_text("CHATGPT_API_KEY=from-key\n", encoding="utf-8")
+
+    original_env_file = Settings.model_config.get("env_file")
+    Settings.model_config["env_file"] = (env_dir / ".env", env_dir / ".env.key")
+
+    monkeypatch.setenv("CHATGPT_API_KEY", "from-process-env")
+
+    try:
+        settings = Settings()
+    finally:
+        Settings.model_config["env_file"] = original_env_file
+
+    assert settings.chatgpt_api_key == "from-process-env"
+
+
 def test_resolve_es_url_falls_back_to_default_when_env_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ELASTICSEARCH_URL", raising=False)
     assert indexing_service._resolve_es_url(None) == "http://localhost:9200"
@@ -74,6 +124,15 @@ def test_compose_app_service_overrides_elasticsearch_url() -> None:
     compose_path = Path(__file__).resolve().parents[3] / "docker" / "docker-compose.yml"
     compose_text = compose_path.read_text(encoding="utf-8")
     assert "ELASTICSEARCH_URL: http://elasticsearch:9200" in compose_text
+
+
+def test_compose_app_service_loads_repo_env_files() -> None:
+    compose_path = Path(__file__).resolve().parents[3] / "docker" / "docker-compose.yml"
+    compose_text = compose_path.read_text(encoding="utf-8")
+    assert "env_file:" in compose_text
+    assert "path: ../.env" in compose_text
+    assert "path: ../.env.key" in compose_text
+    assert "required: false" in compose_text
 
 
 def test_get_es_client_prefers_api_key_over_basic_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

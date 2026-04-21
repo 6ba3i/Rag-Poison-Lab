@@ -12,11 +12,15 @@ if TYPE_CHECKING:
     from api.app.llm.registry import LlmRegistry
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_ENV_FILES = (_REPO_ROOT / ".env", _REPO_ROOT / ".env.key")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="",
         extra="ignore",
-        env_file=(".env.key", ".env"),
+        env_file=_DEFAULT_ENV_FILES,
         env_file_encoding="utf-8",
     )
 
@@ -41,7 +45,7 @@ class Settings(BaseSettings):
     qwen_base_url: str | None = None
     qwen_api_key: str | None = None
 
-    repo_root: Path = Path(__file__).resolve().parents[2]
+    repo_root: Path = _REPO_ROOT
     data_root: Path | None = None
     config_root: Path | None = None
     processed_root: Path | None = None

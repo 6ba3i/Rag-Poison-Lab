@@ -188,7 +188,7 @@ def _build_settings(tmp_path: Path) -> Settings:
         encoding="utf-8",
     )
 
-    return Settings(data_root=data_dir, config_root=config_dir, processed_root=processed_dir)
+    return Settings(_env_file=None, data_root=data_dir, config_root=config_dir, processed_root=processed_dir)
 
 
 def test_eval_runner_single_batch_full_and_report_generation(tmp_path: Path) -> None:
@@ -518,6 +518,7 @@ def test_eval_runner_fails_when_poisoned_index_has_no_poison_markers(tmp_path: P
 def test_eval_runner_rerank_preflight_reports_unreachable_local_ollama(monkeypatch, tmp_path: Path) -> None:
     settings = _build_settings(tmp_path)
     settings = Settings(
+        _env_file=None,
         data_root=settings.resolved_data_root,
         config_root=settings.resolved_config_dir,
         processed_root=settings.resolved_processed_dir,
@@ -937,6 +938,7 @@ def test_eval_runner_uses_resolved_config_dir_for_default_and_custom_config_root
     runs_root = tmp_path / "runs"
 
     default_settings = Settings(
+        _env_file=None,
         data_root=base_settings.resolved_data_root,
         processed_root=base_settings.resolved_processed_dir,
         config_root=None,
@@ -959,6 +961,7 @@ def test_eval_runner_uses_resolved_config_dir_for_default_and_custom_config_root
     custom_attack_config.write_text((base_settings.resolved_config_dir / "attack_config.json").read_text(encoding="utf-8"), encoding="utf-8")
 
     custom_settings = Settings(
+        _env_file=None,
         data_root=base_settings.resolved_data_root,
         processed_root=base_settings.resolved_processed_dir,
         config_root=custom_config_root,

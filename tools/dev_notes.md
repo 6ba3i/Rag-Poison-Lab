@@ -27,13 +27,15 @@ Optional shared transit config:
 - `OPENAI_COMPAT_BASE_URL`
 - `OPENAI_COMPAT_API_KEY`
 
-Provider keys are read from `.env` / `.env.key`; `./secrets/` files are no longer used.
+Provider keys are read from repo-root `.env` / `.env.key`; `./secrets/` files are no longer used.
 
 ## Start the Stack
 
 ```bash
 docker compose -f docker/docker-compose.yml up -d --build
 ```
+
+The `RagPoison` service explicitly loads repo-root `.env` first and `.env.key` second, so `.env.key` overrides `.env` when both define the same key.
 
 ## Run the Wizard
 
@@ -46,6 +48,12 @@ Optional host-run mode (dev, publish Elasticsearch first):
 ```bash
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d --build
 ELASTICSEARCH_URL=http://localhost:9200 uv run --project api python -m api.app.cli.cli wizard
+```
+
+Refresh the curated cloud model snapshot from official provider APIs:
+
+```bash
+uv run --project api python -m api.app.cli.cli llm refresh-models
 ```
 
 ## Index and Run Evaluation
@@ -104,3 +112,6 @@ Expected indices:
   - Host-shell commands should use `http://localhost:9200` when Elasticsearch is published (for example via `docker/docker-compose.dev.yml`).
 - Ollama model missing:
   - Use the wizard (`docker compose -f docker/docker-compose.yml exec RagPoison uv run --project api python -m api.app.cli.cli wizard`) and run the local model install/pull flow in the LLM configuration screens.
+- Cloud model drift:
+  - Run `uv run --project api python -m api.app.cli.cli llm refresh-models`.
+  - Qwen catalog refresh uses Aliyun China DashScope as the source of truth.

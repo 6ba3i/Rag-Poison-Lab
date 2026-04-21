@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from api.app.llm.base import LlmProvider, ProviderStatus
-from api.app.llm.openai_compatible import OpenAICompatibleClient
+from api.app.llm.openai_responses_client import OpenAIResponsesClient
 
 
 class ChatGptProvider(LlmProvider):
@@ -37,7 +37,7 @@ class ChatGptProvider(LlmProvider):
         if api_key is None:
             raise RuntimeError("ChatGPT provider is unavailable: missing API key environment configuration")
 
-        client = OpenAICompatibleClient(base_url=self.base_url, api_key=api_key, timeout=self.timeout)
+        client = OpenAIResponsesClient(base_url=self.base_url, api_key=api_key, timeout=self.timeout)
         return client.generate(
             model=self.model,
             prompt=prompt,

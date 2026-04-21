@@ -273,6 +273,7 @@ def backend_client(tmp_path: Path) -> TestClient:
     (run_dir / "delta.csv").write_text("metric,baseline,attacked,delta\n", encoding="utf-8")
 
     test_settings = Settings(
+        _env_file=None,
         data_root=data_dir,
         config_root=config_dir,
         processed_root=processed_dir,
@@ -466,6 +467,84 @@ def test_llm_options_secret_availability_and_no_secret_leak(backend_client: Test
     assert options["chatgpt"]["available"] is True
     assert options["claude"]["available"] is False
     assert options["gemini"]["available"] is False
+    assert options["qwen"]["available"] is False
+
+
+def test_llm_options_reads_provider_keys_from_repo_env_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    env_dir = tmp_path / "env-root"
+    work_dir = tmp_path / "nested"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (env_dir / ".env").write_text(
+        "\n".join(
+            [
+                "CHATGPT_API_KEY=chatgpt-from-env",
+                "GEMINI_API_KEY=gemini-from-env",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (env_dir / ".env.key").write_text("CLAUDE_API_KEY=claude-from-key\n", encoding="utf-8")
+
+    data_dir = tmp_path / "data"
+    config_dir = data_dir / "config"
+    static_dir = tmp_path / "static"
+    conf_dir = tmp_path / "conf"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    static_dir.mkdir(parents=True, exist_ok=True)
+    conf_dir.mkdir(parents=True, exist_ok=True)
+    (static_dir / "index.html").write_text("<!doctype html><html><body>Test</body></html>", encoding="utf-8")
+    (conf_dir / "llm_models.yaml").write_text(
+        "\n".join(
+            [
+                "chatgpt:",
+                "  - gpt-4o-mini",
+                "claude:",
+                "  - claude-3-5-haiku",
+                "gemini:",
+                "  - gemini-2.0-flash",
+                "qwen:",
+                "  - qwen-plus",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    original_env_file = Settings.model_config.get("env_file")
+    Settings.model_config["env_file"] = (env_dir / ".env", env_dir / ".env.key")
+    for env_name in ("CHATGPT_API_KEY", "CLAUDE_API_KEY", "GEMINI_API_KEY", "QWEN_API_KEY"):
+        monkeypatch.delenv(env_name, raising=False)
+
+    try:
+        monkeypatch.chdir(work_dir)
+        test_settings = Settings(
+            data_root=data_dir,
+            config_root=config_dir,
+            static_root=static_dir,
+            llm_models_file=conf_dir / "llm_models.yaml",
+        )
+        registry = LlmRegistry(settings=test_settings)
+        monkeypatch.setattr(registry, "list_local_models", lambda: ["qwen2.5:1.5b"])
+
+        app.dependency_overrides[get_settings] = lambda: test_settings
+        app.dependency_overrides[get_llm_registry] = lambda: registry
+
+        with TestClient(app) as client:
+            response = client.get("/api/settings/llm/options")
+    finally:
+        Settings.model_config["env_file"] = original_env_file
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    options = {item["provider"]: item for item in response.json()["providers"]}
+    assert options["chatgpt"]["available"] is True
+    assert options["claude"]["available"] is True
+    assert options["gemini"]["available"] is True
     assert options["qwen"]["available"] is False
 
 

@@ -32,8 +32,8 @@ This repository implements an end-to-end poisoning research workflow on MovieLen
   [Sources: api/app/routers/recs.py, api/app/routers/trace.py, api/app/services/recs_service.py]
 - Configurable victim/attacker LLM roles and ranking mode (`deterministic` or `llm_rerank`).  
   [Sources: common/schemas/llm_config.py, api/app/routers/settings_llm.py, api/app/services/recs_service.py]
-- Interactive CLI wizard and non-interactive commands for data, attack, indexing, evaluation, and reports.  
-  [Sources: api/app/cli/cli.py, api/app/cli/wizard.py, api/app/cli/commands_data.py, api/app/cli/commands_attack.py, api/app/cli/commands_index.py, api/app/cli/commands_eval.py, api/app/cli/commands_report.py]
+- Interactive CLI wizard and non-interactive commands for data, attack, indexing, evaluation, reports, and model-catalog refresh.  
+  [Sources: api/app/cli/cli.py, api/app/cli/wizard.py, api/app/cli/commands_data.py, api/app/cli/commands_attack.py, api/app/cli/commands_index.py, api/app/cli/commands_eval.py, api/app/cli/commands_report.py, api/app/cli/commands_llm.py]
 - React + Vite frontend for user selection, dashboard, and settings.  
   [Sources: web/package.json, web/src/main.tsx, web/src/pages/UserSelect.tsx, web/src/pages/Dashboard.tsx, web/src/pages/Settings.tsx]
 - Python SDK client for typed API consumption.  
@@ -165,7 +165,7 @@ docker build -t ragpoison:dev -f Dockerfile .
 | `CONFIG_ROOT` | No | auto-resolved | Optional override for config directory. | `api/app/settings.py` |
 | `PROCESSED_ROOT` | No | auto-resolved | Optional override for processed outputs directory. | `api/app/settings.py` |
 | `STATIC_ROOT` | No | `api/app/static` | Optional override for served SPA/static root. | `api/app/settings.py`, `api/app/main.py` |
-| `LLM_MODELS_FILE` | No | `conf/llm_models.yaml` | Optional override for curated cloud model list file. | `api/app/settings.py`, `api/app/llm/registry.py` |
+| `LLM_MODELS_FILE` | No | `conf/llm_models.yaml` | Optional override for curated cloud model list file. Refresh it with `llm refresh-models` when official provider catalogs change. | `api/app/settings.py`, `api/app/llm/registry.py`, `api/app/cli/commands_llm.py` |
 
 #### Compose/image selection variables
 
@@ -193,15 +193,15 @@ docker build -t ragpoison:dev -f Dockerfile .
   [Sources: api/app/routers/settings_llm.py, api/app/services/recs_service.py, api/app/cli/wizard.py, data/config/llm_config.json]
 - `data/config/attack_config.json`: attack type and poisoning parameters.  
   [Sources: common/schemas/attack_config.py, agent/datasets/poison_builder.py, api/app/cli/wizard.py, data/config/attack_config.json]
-- `conf/llm_models.yaml`: curated cloud model options by provider.  
-  [Sources: api/app/llm/registry.py, conf/llm_models.yaml]
+- `conf/llm_models.yaml`: curated cloud model options by provider, generated from official provider APIs. Qwen entries are sourced from Aliyun China DashScope, not the global catalog.  
+  [Sources: api/app/llm/registry.py, api/app/llm/model_catalog.py, conf/llm_models.yaml]
 - `docker/es/movies_index.json` and `docker/es/movies_poisoned_index.json`: index mapping payloads used by index workflows.  
   [Sources: api/app/services/indexing_service.py, docker/scripts/index_baseline.sh, docker/scripts/index_poisoned.sh]
 
 ### Secrets and security notes
 
 - Env vars are the primary credential source. The app loads `.env` by default and also supports `.env.key` as an optional alias.
-- Compose reads provider keys from `.env` / `.env.key`; `secrets/` files are no longer used.  
+- Compose reads provider keys from repo-root `.env` / `.env.key`, with `.env.key` overriding `.env`; `secrets/` files are no longer used.  
   [Sources: docker/docker-compose.yml, api/app/settings.py]
 - Cloud providers are marked unavailable when no API key env configuration is present.  
   [Sources: api/app/llm/registry.py, api/app/routers/settings_llm.py]
@@ -212,7 +212,7 @@ docker build -t ragpoison:dev -f Dockerfile .
 
 1. Copy `.env.example` to `.env`.
 2. Set provider keys in `.env` (`CHATGPT_API_KEY`, `CLAUDE_API_KEY`, `GEMINI_API_KEY`, `QWEN_API_KEY`) and optional transit vars (`OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_API_KEY`).
-3. Restart the app or compose stack after updating keys.
+3. Restart the app or compose stack after updating keys so the backend reloads the env-backed settings snapshot.
 
 ## Running the project
 
@@ -222,6 +222,12 @@ Run API CLI help:
 
 ```bash
 uv run --project api python -m api.app.cli.cli --help
+```
+
+Refresh the curated cloud model catalog from official provider APIs:
+
+```bash
+uv run --project api python -m api.app.cli.cli llm refresh-models
 ```
 
 Run API server directly:
