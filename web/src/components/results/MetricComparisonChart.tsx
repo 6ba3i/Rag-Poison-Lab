@@ -40,12 +40,12 @@ function clampToUnit(value: number): number {
 
 function connectorColor(baseline: number, attacked: number): string {
   if (attacked > baseline) {
-    return "rgba(245, 158, 11, 0.5)";
+    return "var(--chart-connector-better)";
   }
   if (attacked < baseline) {
-    return "rgba(239, 68, 68, 0.5)";
+    return "var(--chart-connector-worse)";
   }
-  return "rgba(61, 79, 106, 0.3)";
+  return "var(--chart-connector-neutral)";
 }
 
 function DumbbellChart({ rows }: { rows: MetricRow[] }): JSX.Element {
@@ -112,7 +112,7 @@ function GroupedBarChart({ rows }: { rows: MetricRow[] }): JSX.Element {
         groupMode="grouped"
         valueScale={{ type: "linear", min: 0, max: 1 }}
         indexScale={{ type: "band", round: true }}
-        colors={({ id }) => (id === "baseline" ? "#3B82F6" : "#EF4444")}
+        colors={({ id }) => (id === "baseline" ? "var(--baseline-strong)" : "var(--attack-strong)")}
         borderRadius={4}
         enableGridY
         axisBottom={{
@@ -127,33 +127,33 @@ function GroupedBarChart({ rows }: { rows: MetricRow[] }): JSX.Element {
         }}
         theme={{
           text: {
-            fill: "#6B7FA0",
+            fill: "var(--chart-text)",
             fontSize: 12,
           },
           axis: {
             ticks: {
-              line: { stroke: "rgba(255, 255, 255, 0.09)" },
-              text: { fill: "#6B7FA0" },
+              line: { stroke: "var(--chart-grid)" },
+              text: { fill: "var(--chart-text)" },
             },
             domain: {
-              line: { stroke: "rgba(255, 255, 255, 0.09)" },
+              line: { stroke: "var(--chart-grid)" },
             },
           },
           grid: {
-            line: { stroke: "rgba(255, 255, 255, 0.09)", strokeOpacity: 0.45 },
+            line: { stroke: "var(--chart-grid)", strokeOpacity: 0.45 },
           },
           tooltip: {
             container: {
-              background: "#111827",
-              color: "#E4EAF4",
-              border: "1px solid rgba(255, 255, 255, 0.09)",
+              background: "var(--chart-tooltip-bg)",
+              color: "var(--chart-tooltip-text)",
+              border: "1px solid var(--chart-tooltip-border)",
               borderRadius: "8px",
             },
           },
         }}
         labelSkipWidth={16}
         labelSkipHeight={16}
-        labelTextColor="#E4EAF4"
+        labelTextColor="var(--chart-tooltip-text)"
         tooltip={({ id, value, color }) => (
           <div className="chart-tooltip">
             <span className="chart-tooltip-dot" style={{ background: color }} />

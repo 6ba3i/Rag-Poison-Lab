@@ -48,7 +48,7 @@ function TraceColumn({ label, tone, trace }: ColumnProps): JSX.Element {
                 <>
                   <p className="rec-explanation">{doc.snippet}</p>
                   {hasPoison && doc.poison_payload ? (
-                    <p className="rec-explanation" style={{ color: "#fbbf24", marginTop: 6 }}>
+                    <p className="rec-explanation rec-explanation-warning">
                       Payload: {doc.poison_payload}
                     </p>
                   ) : null}
