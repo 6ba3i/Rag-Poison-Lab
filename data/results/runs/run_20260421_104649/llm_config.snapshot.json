@@ -4,7 +4,7 @@
     "provider": "gemini"
   },
   "ranking_mode": "llm_rerank",
-  "retrieval_mode": "dense",
+  "retrieval_mode": "hybrid",
   "victim": {
     "model": "gemini-2.5-flash-lite",
     "provider": "gemini"

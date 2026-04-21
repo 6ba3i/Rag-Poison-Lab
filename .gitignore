@@ -2,7 +2,6 @@
 node_modules/
 
 data/processed/*
-data/results/*
 
 secrets/
 .env
