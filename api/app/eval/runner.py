@@ -447,7 +447,6 @@ def run_experiments(
         else None
     )
 
-    metrics_path = run_dir / "metrics.json"
     if attack_trace_payload is not None:
         attack_trace_path = run_dir / "attack_trace.json"
         attack_trace_path.write_text(json.dumps(attack_trace_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -494,33 +493,27 @@ def run_experiments(
     if attack_trace_path is not None:
         payload["attack_trace_path"] = str(attack_trace_path)
 
-    metrics_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    manifest_path = run_dir / "experiment_manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "label": run_label,
-                "mode": mode,
-                "k": int(k),
-                "requested_users": len(selected_user_ids),
-                "evaluated_users": len(per_user_rows),
-                "skipped_users": len(skipped),
-                "attack_config_sha256": attack_config_sha256,
-                "attack_config_path": str(resolved_attack_config_path),
-                "defense_config_sha256": defense_config_sha256,
-                "defense_config_path": str(defense_config_path),
-                "index_provenance": index_provenance,
-                "runtime_snapshot_paths": runtime_snapshot_paths,
-                "metrics_path": str(metrics_path),
-                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-                "repeat_count": repeat_count,
-                "seed": seed,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+    manifest_payload = {
+        "label": run_label,
+        "mode": mode,
+        "k": int(k),
+        "requested_users": len(selected_user_ids),
+        "evaluated_users": len(per_user_rows),
+        "skipped_users": len(skipped),
+        "attack_config_sha256": attack_config_sha256,
+        "attack_config_path": str(resolved_attack_config_path),
+        "defense_config_sha256": defense_config_sha256,
+        "defense_config_path": str(defense_config_path),
+        "index_provenance": index_provenance,
+        "runtime_snapshot_paths": runtime_snapshot_paths,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "repeat_count": repeat_count,
+        "seed": seed,
+    }
+    metrics_path, manifest_path = _write_metrics_and_manifest(
+        run_dir=run_dir,
+        metrics_payload=payload,
+        manifest_payload=manifest_payload,
     )
 
     summary = {
@@ -681,33 +674,26 @@ def _run_repeated_experiments(
     if warnings:
         payload["warnings"] = warnings
 
-    metrics_path = run_dir / "metrics.json"
-    metrics_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    manifest_path = run_dir / "experiment_manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "label": run_label,
-                "mode": mode,
-                "k": int(k),
-                "requested_users": payload["requested_users"],
-                "evaluated_users": payload["evaluated_users"],
-                "skipped_users": payload["skipped_users"],
-                "attack_config_sha256": attack_config_sha256,
-                "attack_config_path": str(resolved_attack_config_path),
-                "defense_config_sha256": defense_config_sha256,
-                "defense_config_path": str(defense_config_path),
-                "runtime_snapshot_paths": runtime_snapshot_paths,
-                "metrics_path": str(metrics_path),
-                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-                "repeat_count": repeat_count,
-                "seed": seed,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+    manifest_payload = {
+        "label": run_label,
+        "mode": mode,
+        "k": int(k),
+        "requested_users": payload["requested_users"],
+        "evaluated_users": payload["evaluated_users"],
+        "skipped_users": payload["skipped_users"],
+        "attack_config_sha256": attack_config_sha256,
+        "attack_config_path": str(resolved_attack_config_path),
+        "defense_config_sha256": defense_config_sha256,
+        "defense_config_path": str(defense_config_path),
+        "runtime_snapshot_paths": runtime_snapshot_paths,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "repeat_count": repeat_count,
+        "seed": seed,
+    }
+    metrics_path, manifest_path = _write_metrics_and_manifest(
+        run_dir=run_dir,
+        metrics_payload=payload,
+        manifest_payload=manifest_payload,
     )
 
     summary: dict[str, Any] = {
@@ -756,6 +742,25 @@ def _prepare_run_dir(*, run_dir: Path, allow_overwrite: bool) -> None:
 
 def _hash_file(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
+
+
+def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_metrics_and_manifest(
+    *,
+    run_dir: Path,
+    metrics_payload: dict[str, Any],
+    manifest_payload: dict[str, Any],
+) -> tuple[Path, Path]:
+    metrics_path = run_dir / "metrics.json"
+    _write_json_file(metrics_path, metrics_payload)
+    manifest_path = run_dir / "experiment_manifest.json"
+    manifest_with_metrics = dict(manifest_payload)
+    manifest_with_metrics["metrics_path"] = str(metrics_path)
+    _write_json_file(manifest_path, manifest_with_metrics)
+    return metrics_path, manifest_path
 
 
 def _load_metrics_payload(path: Path) -> dict[str, Any]:

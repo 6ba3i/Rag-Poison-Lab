@@ -63,13 +63,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RankingResult:
-    ranking_mode: RankingMode
+    requested_ranking_mode: RankingMode
+    effective_ranking_mode: RankingMode
     ranked: list[RankedCandidate]
     rerank_candidates: list[dict[str, Any]] | None = None
     rerank_prompt: str | None = None
     rerank_raw_response: str | None = None
     rerank_parsed_order: list[int] | None = None
     rerank_fallback: bool | None = None
+    rerank_attempted: bool | None = None
+    rerank_fallback_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,7 +132,13 @@ def rank_candidates_for_mode(
     deterministic_top = deterministic_ranked[:k]
 
     if ranking_mode != "llm_rerank":
-        return RankingResult(ranking_mode=ranking_mode, ranked=deterministic_top)
+        return RankingResult(
+            requested_ranking_mode=ranking_mode,
+            effective_ranking_mode=ranking_mode,
+            ranked=deterministic_top,
+            rerank_fallback=False,
+            rerank_attempted=False,
+        )
 
     prompt_source = prompt_candidates if prompt_candidates is not None else candidates
     rerank_pool = _build_rerank_candidates(candidates[:LLM_RERANK_CANDIDATE_LIMIT])
@@ -138,10 +147,13 @@ def rank_candidates_for_mode(
     if not rerank_pool or not prompt_pool:
         logger.warning("LLM rerank fallback: empty candidate pool")
         return RankingResult(
-            ranking_mode=ranking_mode,
+            requested_ranking_mode=ranking_mode,
+            effective_ranking_mode="deterministic",
             ranked=deterministic_top,
             rerank_candidates=trace_candidates,
             rerank_fallback=True,
+            rerank_attempted=False,
+            rerank_fallback_reason="empty_candidate_pool",
         )
 
     rerank_prompt = _build_rerank_prompt(context=context, rerank_pool=prompt_pool, k=k)
@@ -151,11 +163,14 @@ def rank_candidates_for_mode(
         if log_victim_unavailable:
             logger.warning("LLM rerank fallback: victim LLM client unavailable")
         return RankingResult(
-            ranking_mode=ranking_mode,
+            requested_ranking_mode=ranking_mode,
+            effective_ranking_mode="deterministic",
             ranked=deterministic_top,
             rerank_candidates=trace_candidates,
             rerank_prompt=trace_prompt,
             rerank_fallback=True,
+            rerank_attempted=False,
+            rerank_fallback_reason="victim_llm_unavailable",
         )
 
     try:
@@ -170,22 +185,28 @@ def rank_candidates_for_mode(
     except Exception as exc:  # noqa: BLE001
         logger.warning("LLM rerank fallback: generation failed: %s", exc)
         return RankingResult(
-            ranking_mode=ranking_mode,
+            requested_ranking_mode=ranking_mode,
+            effective_ranking_mode="deterministic",
             ranked=deterministic_top,
             rerank_candidates=trace_candidates,
             rerank_prompt=trace_prompt,
             rerank_fallback=True,
+            rerank_attempted=True,
+            rerank_fallback_reason="generation_failed",
         )
 
-    parsed_order = _parse_rerank_order(raw_response, candidate_count=len(prompt_pool))
+    parsed_order, parse_fallback_reason = _parse_rerank_order(raw_response, candidate_count=len(prompt_pool))
     if parsed_order is None:
         return RankingResult(
-            ranking_mode=ranking_mode,
+            requested_ranking_mode=ranking_mode,
+            effective_ranking_mode="deterministic",
             ranked=deterministic_top,
             rerank_candidates=trace_candidates,
             rerank_prompt=trace_prompt,
             rerank_raw_response=raw_response,
             rerank_fallback=True,
+            rerank_attempted=True,
+            rerank_fallback_reason=parse_fallback_reason or "parse_failed",
         )
 
     score_by_movie = {item.candidate.movie_id: item.score for item in deterministic_ranked}
@@ -217,13 +238,15 @@ def rank_candidates_for_mode(
     ]
 
     return RankingResult(
-        ranking_mode=ranking_mode,
+        requested_ranking_mode=ranking_mode,
+        effective_ranking_mode="llm_rerank",
         ranked=reranked,
         rerank_candidates=trace_candidates,
         rerank_prompt=trace_prompt,
         rerank_raw_response=raw_response,
         rerank_parsed_order=parsed_order,
         rerank_fallback=False,
+        rerank_attempted=True,
     )
 
 
@@ -345,12 +368,19 @@ class RecsService:
         retrieval_candidates = list(defense_result.candidates)
         candidates = list(retrieval_candidates)
 
+        retrieval_underflow = len(candidates) < k
         fallback_added = 0
-        if len(candidates) < k:
+        fallback_movie_ids: list[int] = []
+        fallback_policy = "none"
+        strict_underflow = bool(strict_retrieval and retrieval_underflow)
+        if retrieval_underflow and not strict_retrieval:
+            fallback_policy = "ratings_popularity_prior"
+            popularity_priorities = _movie_popularity_priorities(users_service=users_service)
             fallback = fallback_candidates_from_movies(
                 movies_rows=users_service.movies_df.itertuples(index=False),
                 seen_movie_ids=seen_movie_ids,
                 k=k,
+                popularity_priorities=popularity_priorities,
             )
             existing_ids = {candidate.movie_id for candidate in candidates}
             for candidate in fallback:
@@ -359,8 +389,17 @@ class RecsService:
                 candidates.append(candidate)
                 existing_ids.add(candidate.movie_id)
                 fallback_added += 1
+                fallback_movie_ids.append(int(candidate.movie_id))
                 if len(candidates) >= k:
                     break
+        elif strict_underflow:
+            logger.warning(
+                "recs_underflow_strict mode=%s user_id=%s retrieved_count=%s requested_k=%s fallback_skipped=true",
+                mode,
+                user_id,
+                len(retrieval_candidates),
+                k,
+            )
 
         prompt_candidates, prompt_defense_debug = sanitize_candidates_for_prompt(candidates=candidates, config=active_defense)
 
@@ -382,11 +421,14 @@ class RecsService:
         target_movie_ids = [item.movie_id for item in candidates]
         target_payload_docs = [item.movie_id for item in retrieval_candidates if item.poison_payload.strip()]
         logger.info(
-            "recs_candidates phase=recommendation mode=%s user_id=%s index_name=%s retrieved_count=%s fallback_added=%s candidate_ids=%s poison_payload_candidate_ids=%s defense_enabled=%s",
+            "recs_candidates phase=recommendation mode=%s user_id=%s index_name=%s retrieved_count=%s retrieval_underflow=%s strict_underflow=%s fallback_policy=%s fallback_added=%s candidate_ids=%s poison_payload_candidate_ids=%s defense_enabled=%s",
             mode,
             user_id,
             index_name,
             len(retrieval_result.candidates),
+            retrieval_underflow,
+            strict_underflow,
+            fallback_policy,
             fallback_added,
             target_movie_ids,
             target_payload_docs,
@@ -438,14 +480,23 @@ class RecsService:
                     "retrieval": defense_result.debug,
                     "prompt": prompt_defense_debug,
                 },
+                "retrieval_underflow": retrieval_underflow,
+                "strict_underflow": strict_underflow,
                 "fallback_used": bool(fallback_added > 0),
                 "fallback_added": int(fallback_added),
+                "fallback_policy": fallback_policy,
+                "fallback_movie_ids": fallback_movie_ids,
+                "fallback_skipped_reason": "strict_retrieval_no_filler" if strict_underflow else None,
+                "requested_ranking_mode": ranking.requested_ranking_mode,
+                "effective_ranking_mode": ranking.effective_ranking_mode,
+                "rerank_attempted": ranking.rerank_attempted,
                 "ranking_input_candidates": [_candidate_debug(item) for item in candidates[:DEBUG_CANDIDATE_LIMIT]],
                 "ranking_input_movie_ids": [int(item.movie_id) for item in candidates],
                 "rerank_prompt": ranking.rerank_prompt,
                 "rerank_candidates": ranking.rerank_candidates,
                 "rerank_parsed_order": ranking.rerank_parsed_order,
                 "rerank_fallback": ranking.rerank_fallback,
+                "rerank_fallback_reason": ranking.rerank_fallback_reason,
                 "final_ranked_movie_ids": [int(item["movie_id"]) for item in output],
             }
             if ranking.rerank_prompt is not None:
@@ -453,13 +504,16 @@ class RecsService:
                 debug["rerank_prompt_has_synopsis"] = "synopsis:" in ranking.rerank_prompt
 
         logger.info(
-            "recs_result phase=recommendation mode=%s user_id=%s index_name=%s ranking_mode=%s final_movie_ids=%s rerank_fallback=%s",
+            "recs_result phase=recommendation mode=%s user_id=%s index_name=%s requested_ranking_mode=%s effective_ranking_mode=%s final_movie_ids=%s rerank_attempted=%s rerank_fallback=%s rerank_fallback_reason=%s",
             mode,
             user_id,
             index_name,
-            llm_config.ranking_mode,
+            ranking.requested_ranking_mode,
+            ranking.effective_ranking_mode,
             [int(item["movie_id"]) for item in output],
+            ranking.rerank_attempted,
             ranking.rerank_fallback,
+            ranking.rerank_fallback_reason,
         )
 
         return {
@@ -477,15 +531,15 @@ class RecsService:
             return None
 
 
-def _parse_rerank_order(raw_response: str, *, candidate_count: int) -> list[int] | None:
+def _parse_rerank_order(raw_response: str, *, candidate_count: int) -> tuple[list[int] | None, str | None]:
     payload = _load_json_payload(raw_response)
     if payload is None:
         logger.warning("LLM rerank fallback: invalid JSON response")
-        return None
+        return None, "invalid_json_response"
 
     if not isinstance(payload, list):
         logger.warning("LLM rerank fallback: response must be a JSON array")
-        return None
+        return None, "response_not_json_array"
 
     parsed_order: list[int] = []
     seen: set[int] = set()
@@ -493,16 +547,16 @@ def _parse_rerank_order(raw_response: str, *, candidate_count: int) -> list[int]
     for item in payload:
         if isinstance(item, bool) or not isinstance(item, int):
             logger.warning("LLM rerank fallback: response contains non-integer item")
-            return None
+            return None, "response_contains_non_integer_item"
         if item < 1 or item > candidate_count:
             logger.warning("LLM rerank fallback: response contains out-of-range index")
-            return None
+            return None, "response_contains_out_of_range_index"
         if item in seen:
             continue
         seen.add(item)
         parsed_order.append(item)
 
-    return parsed_order
+    return parsed_order, None
 
 
 def _load_json_payload(raw_response: str) -> object | None:
@@ -603,6 +657,24 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars].rstrip() + "..."
+
+
+def _movie_popularity_priorities(*, users_service: UsersService) -> dict[int, tuple[int, float]]:
+    if users_service.ratings_df.empty:
+        return {}
+
+    ratings = users_service.ratings_df.copy()
+    if "movie_id" not in ratings.columns or "rating" not in ratings.columns:
+        return {}
+
+    ratings["movie_id"] = ratings["movie_id"].astype("int64")
+    ratings["rating"] = ratings["rating"].astype("float64")
+    grouped = ratings.groupby("movie_id", as_index=True)["rating"].agg(["count", "mean"])
+
+    priorities: dict[int, tuple[int, float]] = {}
+    for movie_id, row in grouped.iterrows():
+        priorities[int(movie_id)] = (int(row["count"]), float(row["mean"]))
+    return priorities
 
 
 def _candidate_debug(candidate: CandidateDoc) -> dict[str, Any]:

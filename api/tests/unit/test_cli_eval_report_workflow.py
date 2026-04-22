@@ -931,6 +931,8 @@ def test_eval_runner_supports_defense_and_repeated_run_stats(tmp_path: Path) -> 
     assert summary["repeat_stats"]["repeat_count"] == 2
     assert "defended" in summary
     assert "defense_delta" in summary
+    manifest = json.loads(Path(str(summary["manifest_path"])).read_text(encoding="utf-8"))
+    assert manifest["metrics_path"] == str(summary["metrics_path"])
 
 
 def test_eval_runner_uses_resolved_config_dir_for_default_and_custom_config_root(tmp_path: Path) -> None:

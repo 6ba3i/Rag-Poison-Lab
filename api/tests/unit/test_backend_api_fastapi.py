@@ -451,9 +451,12 @@ def test_trace_includes_rerank_details_when_enabled(backend_client: TestClient) 
     assert response.status_code == 200
     payload = response.json()
     assert payload["ranking_mode"] == "llm_rerank"
+    assert payload["effective_ranking_mode"] == "deterministic"
+    assert payload["rerank_attempted"] is False
     assert payload["rerank_candidates"] is not None
     assert payload["rerank_prompt"] is not None
     assert payload["rerank_fallback"] is True
+    assert payload["rerank_fallback_reason"] == "victim_llm_unavailable"
 
 
 def test_llm_options_secret_availability_and_no_secret_leak(backend_client: TestClient) -> None:

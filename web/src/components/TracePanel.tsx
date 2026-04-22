@@ -15,12 +15,25 @@ interface ColumnProps {
 
 function TraceColumn({ label, tone, trace }: ColumnProps): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const requestedMode = trace?.ranking_mode ?? "-";
+  const effectiveMode = trace?.effective_ranking_mode ?? trace?.ranking_mode ?? "-";
+  const rerankAttempted =
+    trace?.rerank_attempted === true ? "attempted" : trace?.rerank_attempted === false ? "not attempted" : "n/a";
+  const fallbackReason = trace?.rerank_fallback_reason ?? "-";
 
   return (
     <section className={["comparison-column", tone].join(" ")}>
       <h3 className="card-title">{label}</h3>
       <p className="section-caption" style={{ marginTop: 6 }}>Retrieval query</p>
       <p style={{ margin: "6px 0 0", fontSize: 13 }}>{trace?.retrieval_query ?? "-"}</p>
+      <p className="section-caption" style={{ marginTop: 10 }}>
+        {`Ranking requested "${requestedMode}" -> effective "${effectiveMode}"; rerank ${rerankAttempted}`}
+      </p>
+      {trace?.rerank_fallback ? (
+        <p className="section-caption" style={{ marginTop: 4 }}>
+          {`Rerank fallback reason: "${fallbackReason}"`}
+        </p>
+      ) : null}
 
       <div className="rec-list" style={{ marginTop: 14 }}>
         {(trace?.retrieved_docs ?? []).map((doc) => {

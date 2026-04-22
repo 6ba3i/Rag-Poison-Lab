@@ -55,14 +55,17 @@ export interface TraceResponse {
   user_id: number;
   mode: RecommendationMode;
   ranking_mode: RankingMode;
+  effective_ranking_mode?: RankingMode | null;
   retrieval_mode: RetrievalMode;
   retrieval_query: string;
   retrieved_docs: TraceDoc[];
+  rerank_attempted?: boolean | null;
   rerank_candidates?: TraceRerankCandidate[] | null;
   rerank_prompt?: string | null;
   rerank_raw_response?: string | null;
   rerank_parsed_order?: number[] | null;
   rerank_fallback?: boolean | null;
+  rerank_fallback_reason?: string | null;
   retrieval_debug?: Record<string, unknown> | null;
 }
 

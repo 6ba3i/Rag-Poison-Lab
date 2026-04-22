@@ -215,6 +215,7 @@ def fallback_candidates_from_movies(
     movies_rows: Iterable[object],
     seen_movie_ids: set[int],
     k: int,
+    popularity_priorities: dict[int, tuple[int, float]] | None = None,
 ) -> list[CandidateDoc]:
     output: list[CandidateDoc] = []
 
@@ -235,7 +236,16 @@ def fallback_candidates_from_movies(
             continue
         parsed_rows.append((movie_id, title, genres, synopsis))
 
-    parsed_rows.sort(key=lambda item: item[0])
+    if popularity_priorities is None:
+        parsed_rows.sort(key=lambda item: item[0])
+    else:
+        parsed_rows.sort(
+            key=lambda item: (
+                -int(popularity_priorities.get(item[0], (0, 0.0))[0]),
+                -float(popularity_priorities.get(item[0], (0, 0.0))[1]),
+                item[0],
+            )
+        )
 
     for movie_id, title, genres, synopsis in parsed_rows:
         if movie_id in seen_movie_ids:

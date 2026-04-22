@@ -23,6 +23,11 @@ class _StaticLlm:
         return self.response
 
 
+class _FailingLlm:
+    def generate(self, **_: object) -> str:
+        raise RuntimeError("generation exploded")
+
+
 def _context() -> Any:
     return build_user_context(
         profile={"user_id": 1, "top_genres": [{"genre": "Action", "count": 3}]},
@@ -61,6 +66,9 @@ def test_deterministic_mode_unchanged() -> None:
 
     assert _ids(result.ranked) == _ids(expected)
     assert result.rerank_candidates is None
+    assert result.requested_ranking_mode == "deterministic"
+    assert result.effective_ranking_mode == "deterministic"
+    assert result.rerank_attempted is False
 
 
 def test_valid_llm_output_applies_reorder() -> None:
@@ -75,6 +83,9 @@ def test_valid_llm_output_applies_reorder() -> None:
     assert _ids(result.ranked) == [30, 10, 20]
     assert result.rerank_parsed_order == [3, 1, 2]
     assert result.rerank_fallback is False
+    assert result.effective_ranking_mode == "llm_rerank"
+    assert result.rerank_attempted is True
+    assert result.rerank_fallback_reason is None
 
 
 def test_invalid_json_triggers_fallback() -> None:
@@ -92,6 +103,9 @@ def test_invalid_json_triggers_fallback() -> None:
 
     assert _ids(result.ranked) == _ids(expected)
     assert result.rerank_fallback is True
+    assert result.effective_ranking_mode == "deterministic"
+    assert result.rerank_attempted is True
+    assert result.rerank_fallback_reason == "invalid_json_response"
 
 
 def test_markdown_fenced_json_array_is_accepted() -> None:
@@ -106,6 +120,26 @@ def test_markdown_fenced_json_array_is_accepted() -> None:
     assert _ids(result.ranked) == [30, 10, 20]
     assert result.rerank_parsed_order == [3, 1, 2]
     assert result.rerank_fallback is False
+
+
+def test_generation_failure_triggers_fallback() -> None:
+    context = _context()
+    candidates = _candidates()
+    expected = rank_candidates(candidates=candidates, user_top_genres=context.top_genres, k=3)
+
+    result = rank_candidates_for_mode(
+        context=context,
+        candidates=candidates,
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=_FailingLlm(),
+    )
+
+    assert _ids(result.ranked) == _ids(expected)
+    assert result.rerank_fallback is True
+    assert result.effective_ranking_mode == "deterministic"
+    assert result.rerank_attempted is True
+    assert result.rerank_fallback_reason == "generation_failed"
 
 
 def test_json_array_with_surrounding_text_is_accepted() -> None:
@@ -137,6 +171,46 @@ def test_out_of_range_indices_trigger_fallback() -> None:
 
     assert _ids(result.ranked) == _ids(expected)
     assert result.rerank_fallback is True
+    assert result.effective_ranking_mode == "deterministic"
+    assert result.rerank_fallback_reason == "response_contains_out_of_range_index"
+
+
+def test_non_array_json_triggers_fallback_reason() -> None:
+    context = _context()
+    candidates = _candidates()
+    expected = rank_candidates(candidates=candidates, user_top_genres=context.top_genres, k=3)
+
+    result = rank_candidates_for_mode(
+        context=context,
+        candidates=candidates,
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=_StaticLlm('{"order": [1, 2, 3]}'),
+    )
+
+    assert _ids(result.ranked) == _ids(expected)
+    assert result.rerank_fallback is True
+    assert result.rerank_attempted is True
+    assert result.rerank_fallback_reason == "response_not_json_array"
+
+
+def test_non_integer_indices_trigger_fallback_reason() -> None:
+    context = _context()
+    candidates = _candidates()
+    expected = rank_candidates(candidates=candidates, user_top_genres=context.top_genres, k=3)
+
+    result = rank_candidates_for_mode(
+        context=context,
+        candidates=candidates,
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=_StaticLlm('[1, "2", 3]'),
+    )
+
+    assert _ids(result.ranked) == _ids(expected)
+    assert result.rerank_fallback is True
+    assert result.rerank_attempted is True
+    assert result.rerank_fallback_reason == "response_contains_non_integer_item"
 
 
 def test_missing_llm_client_warning_can_be_suppressed(caplog: pytest.LogCaptureFixture) -> None:
@@ -153,6 +227,8 @@ def test_missing_llm_client_warning_can_be_suppressed(caplog: pytest.LogCaptureF
     )
 
     assert result.rerank_fallback is True
+    assert result.rerank_attempted is False
+    assert result.rerank_fallback_reason == "victim_llm_unavailable"
     assert "LLM rerank fallback: victim LLM client unavailable" not in caplog.text
 
 

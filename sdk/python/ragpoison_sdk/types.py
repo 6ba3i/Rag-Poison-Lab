@@ -77,14 +77,17 @@ class TraceResponse(SdkBaseModel):
     user_id: int
     mode: RecommendationMode
     ranking_mode: RankingMode = "deterministic"
+    effective_ranking_mode: RankingMode | None = None
     retrieval_mode: RetrievalMode = "lexical"
     retrieval_query: str
     retrieved_docs: list[TraceDoc]
+    rerank_attempted: bool | None = None
     rerank_candidates: list[TraceRerankCandidate] | None = None
     rerank_prompt: str | None = None
     rerank_raw_response: str | None = None
     rerank_parsed_order: list[int] | None = None
     rerank_fallback: bool | None = None
+    rerank_fallback_reason: str | None = None
     retrieval_debug: dict[str, object] | None = None
 
 

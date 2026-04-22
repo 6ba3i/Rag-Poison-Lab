@@ -93,15 +93,18 @@ class TraceService:
 
         return {
             "ranking_mode": llm_config.ranking_mode,
+            "effective_ranking_mode": ranking.effective_ranking_mode,
             "retrieval_mode": llm_config.retrieval_mode,
             "retrieval_query": query_text,
             "retrieval_query_body": query_body,
             "retrieved_docs": docs,
+            "rerank_attempted": ranking.rerank_attempted,
             "rerank_candidates": ranking.rerank_candidates,
             "rerank_prompt": ranking.rerank_prompt,
             "rerank_raw_response": ranking.rerank_raw_response,
             "rerank_parsed_order": ranking.rerank_parsed_order,
             "rerank_fallback": ranking.rerank_fallback,
+            "rerank_fallback_reason": ranking.rerank_fallback_reason,
             "retrieval_debug": retrieval_result.debug,
         }
 
