@@ -829,10 +829,10 @@ load_matrix() {
     ranking_modes=("deterministic" "llm_rerank")
     poison_fractions=("0.2")
     model_specs=(
-      "chatgpt|gpt-5.4-pro|gpt54p"
+      "chatgpt|gpt-5.4|gpt54"
       "claude|claude-sonnet-4-6|cls46"
       "gemini|gemini-2.5-pro|ge25p"
-      "qwen|qwen3.6-max-preview|qw36mx"
+      "qwen|qwen3.5-plus|qw35p"
       "deepseek|deepseek-reasoner|dsrsn"
     )
 
@@ -863,16 +863,16 @@ load_matrix() {
 
     local cross_pairs pair_spec
     cross_pairs=(
-      "chatgpt|gpt-5.4-pro|gpt54p|claude|claude-sonnet-4-6|cls46"
+      "chatgpt|gpt-5.4|gpt54|claude|claude-sonnet-4-6|cls46"
       "claude|claude-sonnet-4-6|cls46|gemini|gemini-2.5-pro|ge25p"
-      "gemini|gemini-2.5-pro|ge25p|qwen|qwen3.6-max-preview|qw36mx"
-      "qwen|qwen3.6-max-preview|qw36mx|deepseek|deepseek-reasoner|dsrsn"
-      "deepseek|deepseek-reasoner|dsrsn|chatgpt|gpt-5.4-pro|gpt54p"
-      "chatgpt|gpt-5.4-pro|gpt54p|gemini|gemini-2.5-pro|ge25p"
+      "gemini|gemini-2.5-pro|ge25p|qwen|qwen3.5-plus|qw35p"
+      "qwen|qwen3.5-plus|qw35p|deepseek|deepseek-reasoner|dsrsn"
+      "deepseek|deepseek-reasoner|dsrsn|chatgpt|gpt-5.4|gpt54"
+      "chatgpt|gpt-5.4|gpt54|gemini|gemini-2.5-pro|ge25p"
       "gemini|gemini-2.5-pro|ge25p|deepseek|deepseek-reasoner|dsrsn"
       "deepseek|deepseek-reasoner|dsrsn|claude|claude-sonnet-4-6|cls46"
-      "claude|claude-sonnet-4-6|cls46|qwen|qwen3.6-max-preview|qw36mx"
-      "qwen|qwen3.6-max-preview|qw36mx|chatgpt|gpt-5.4-pro|gpt54p"
+      "claude|claude-sonnet-4-6|cls46|qwen|qwen3.5-plus|qw35p"
+      "qwen|qwen3.5-plus|qw35p|chatgpt|gpt-5.4|gpt54"
     )
 
     local attack_type victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag
