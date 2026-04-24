@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     qwen_base_url: str | None = None
     qwen_api_key: str | None = None
+    deepseek_base_url: str | None = None
+    deepseek_api_key: str | None = None
 
     repo_root: Path = _REPO_ROOT
     data_root: Path | None = None

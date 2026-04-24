@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-ProviderName = Literal["local", "chatgpt", "claude", "gemini", "qwen"]
+ProviderName = Literal["local", "chatgpt", "claude", "gemini", "qwen", "deepseek"]
 RankingMode = Literal["deterministic", "llm_rerank"]
 RetrievalMode = Literal["lexical", "dense", "hybrid"]
 

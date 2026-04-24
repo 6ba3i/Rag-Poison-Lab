@@ -131,6 +131,7 @@ def _environment_checks_screen() -> None:
         "claude": "CLAUDE_API_KEY",
         "gemini": "GEMINI_API_KEY",
         "qwen": "QWEN_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
     }
     for provider, env_name in provider_env_key.items():
         api_key, source = resolve_api_key(provider_name=provider, settings=settings)
@@ -701,7 +702,7 @@ def _prompt_role_config(*, registry: LlmRegistry, role_name: str, current: LlmRo
     options = {item.provider: item for item in registry.list_provider_options()}
 
     provider_choices: list[Choice] = []
-    for provider in ["local", "chatgpt", "claude", "gemini", "qwen"]:
+    for provider in ["local", "chatgpt", "claude", "gemini", "qwen", "deepseek"]:
         option = options.get(provider)
         if option is None:
             continue

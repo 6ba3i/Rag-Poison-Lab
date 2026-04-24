@@ -9,6 +9,7 @@ from api.app.llm import anthropic_client, gemini_client, local_ollama, openai_co
 from api.app.llm.local_ollama import LocalOllamaProvider
 from api.app.llm.providers_chatgpt import ChatGptProvider
 from api.app.llm.providers_claude import ClaudeProvider
+from api.app.llm.providers_deepseek import DeepSeekProvider
 from api.app.llm.providers_gemini import GeminiProvider
 from api.app.llm.providers_qwen import QwenProvider
 from api.app.llm.registry import LlmRegistry
@@ -205,6 +206,27 @@ def test_qwen_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert provider.healthcheck().healthy is True
 
 
+def test_deepseek_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return FakeResponse(200, {"choices": [{"message": {"content": "deepseek output"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    provider = DeepSeekProvider(model="deepseek-reasoner", api_key="deepseek-key", curated_models=["deepseek-reasoner"])
+    output = provider.generate(prompt="hello")
+
+    assert output == "deepseek output"
+    assert captured["url"] == "https://api.deepseek.com/chat/completions"
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer deepseek-key"
+    assert provider.healthcheck().healthy is True
+
+
 def test_registry_chatgpt_env_only_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     settings = _build_settings_for_registry(
         tmp_path,
@@ -282,6 +304,8 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
                 "  - gemini-2.5-flash",
                 "qwen:",
                 "  - qwen3.6-plus",
+                "deepseek:",
+                "  - deepseek-chat",
             ]
         )
         + "\n",
@@ -303,6 +327,7 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
     assert options["local"].available is True
     assert options["chatgpt"].available is True
     assert options["claude"].available is False
+    assert options["deepseek"].available is False
     assert options["chatgpt"].models == ["gpt-5.4", "gpt-5.4-mini"]
 
     first_config = {

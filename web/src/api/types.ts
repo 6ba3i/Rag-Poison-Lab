@@ -1,6 +1,6 @@
 export type RecommendationMode = "baseline" | "attacked";
 export type HistorySplit = "train" | "all";
-export type ProviderName = "local" | "chatgpt" | "claude" | "gemini" | "qwen";
+export type ProviderName = "local" | "chatgpt" | "claude" | "gemini" | "qwen" | "deepseek";
 export type RankingMode = "deterministic" | "llm_rerank";
 export type RetrievalMode = "lexical" | "dense" | "hybrid";
 export type DefenseSuspicionMode = "filter" | "penalize";

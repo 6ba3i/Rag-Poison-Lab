@@ -9,12 +9,13 @@ import yaml
 
 from api.app.settings import Settings
 
-CLOUD_PROVIDERS: tuple[str, ...] = ("chatgpt", "claude", "gemini", "qwen")
+CLOUD_PROVIDERS: tuple[str, ...] = ("chatgpt", "claude", "gemini", "qwen", "deepseek")
 OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 QWEN_COMPAT_MODELS_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
 QWEN_MODELS_URL = "https://dashscope.aliyuncs.com/api/v1/models"
+DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
 
 
 def refresh_cloud_model_catalog(
@@ -35,6 +36,8 @@ def refresh_cloud_model_catalog(
             catalog[provider] = fetch_gemini_model_catalog(settings=settings, timeout=timeout)
         elif provider == "qwen":
             catalog[provider] = fetch_qwen_model_catalog(settings=settings, timeout=timeout)
+        elif provider == "deepseek":
+            catalog[provider] = fetch_deepseek_model_catalog(settings=settings, timeout=timeout)
         else:
             raise KeyError(f"Unknown cloud provider: {provider}")
 
@@ -118,6 +121,20 @@ def fetch_qwen_model_catalog(*, settings: Settings, timeout: float = 30.0) -> li
         page_no += 1
 
     return filter_qwen_model_ids(compat_data=compat_data, model_data=full_models)
+
+
+def fetch_deepseek_model_catalog(*, settings: Settings, timeout: float = 30.0) -> list[str]:
+    api_key = _require_provider_key(settings.deepseek_api_key, provider="deepseek")
+    base_url = (settings.deepseek_base_url or DEEPSEEK_DEFAULT_BASE_URL).strip() or DEEPSEEK_DEFAULT_BASE_URL
+    response = httpx.get(
+        f"{base_url.rstrip('/')}/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data", [])
+    return filter_deepseek_model_ids(data)
 
 
 def filter_openai_model_ids(data: object) -> list[str]:
@@ -228,6 +245,26 @@ def filter_qwen_model_ids(*, compat_data: object, model_data: object) -> list[st
         if not isinstance(response_modality, list) or "Text" not in response_modality:
             continue
 
+        selected.append(model_id)
+
+    return _dedupe(selected)
+
+
+def filter_deepseek_model_ids(data: object) -> list[str]:
+    if not isinstance(data, list):
+        return []
+
+    selected: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = str(item.get("id", "")).strip()
+        if not model_id.startswith("deepseek-"):
+            continue
+
+        lowered = model_id.lower()
+        if any(token in lowered for token in ("audio", "image", "vision", "vl", "embedding", "tts", "asr")):
+            continue
         selected.append(model_id)
 
     return _dedupe(selected)

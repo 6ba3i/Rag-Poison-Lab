@@ -199,6 +199,8 @@ def backend_client(tmp_path: Path) -> TestClient:
                 "  - gemini-2.0-flash",
                 "qwen:",
                 "  - qwen-plus",
+                "deepseek:",
+                "  - deepseek-chat",
             ]
         )
         + "\n",
@@ -471,6 +473,7 @@ def test_llm_options_secret_availability_and_no_secret_leak(backend_client: Test
     assert options["claude"]["available"] is False
     assert options["gemini"]["available"] is False
     assert options["qwen"]["available"] is False
+    assert options["deepseek"]["available"] is False
 
 
 def test_llm_options_reads_provider_keys_from_repo_env_files(
@@ -512,6 +515,8 @@ def test_llm_options_reads_provider_keys_from_repo_env_files(
                 "  - gemini-2.0-flash",
                 "qwen:",
                 "  - qwen-plus",
+                "deepseek:",
+                "  - deepseek-chat",
             ]
         )
         + "\n",
@@ -520,7 +525,7 @@ def test_llm_options_reads_provider_keys_from_repo_env_files(
 
     original_env_file = Settings.model_config.get("env_file")
     Settings.model_config["env_file"] = (env_dir / ".env", env_dir / ".env.key")
-    for env_name in ("CHATGPT_API_KEY", "CLAUDE_API_KEY", "GEMINI_API_KEY", "QWEN_API_KEY"):
+    for env_name in ("CHATGPT_API_KEY", "CLAUDE_API_KEY", "GEMINI_API_KEY", "QWEN_API_KEY", "DEEPSEEK_API_KEY"):
         monkeypatch.delenv(env_name, raising=False)
 
     try:
@@ -549,6 +554,7 @@ def test_llm_options_reads_provider_keys_from_repo_env_files(
     assert options["claude"]["available"] is True
     assert options["gemini"]["available"] is True
     assert options["qwen"]["available"] is False
+    assert options["deepseek"]["available"] is False
 
 
 def test_results_runs_summary_endpoint_is_lightweight(backend_client: TestClient) -> None:

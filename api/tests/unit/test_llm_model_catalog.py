@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from api.app.llm.model_catalog import (
     filter_anthropic_model_ids,
+    filter_deepseek_model_ids,
     filter_gemini_model_ids,
     filter_openai_model_ids,
     filter_qwen_model_ids,
@@ -94,6 +95,22 @@ def test_qwen_catalog_filters_to_safe_compatible_text_models() -> None:
     assert filter_qwen_model_ids(compat_data=compat, model_data=models) == [
         "qwen3.6-plus",
         "qwen3-max-preview",
+    ]
+
+
+def test_deepseek_catalog_filters_to_text_models() -> None:
+    models = [
+        {"id": "deepseek-chat"},
+        {"id": "deepseek-reasoner"},
+        {"id": "deepseek-vl"},
+        {"id": "deepseek-audio"},
+        {"id": "something-else"},
+        {"id": "deepseek-chat"},
+    ]
+
+    assert filter_deepseek_model_ids(models) == [
+        "deepseek-chat",
+        "deepseek-reasoner",
     ]
 
 

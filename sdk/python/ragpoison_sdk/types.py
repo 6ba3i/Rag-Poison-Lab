@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 RecommendationMode = Literal["baseline", "attacked"]
 HistorySplit = Literal["train", "all"]
-ProviderName = Literal["local", "chatgpt", "claude", "gemini", "qwen"]
+ProviderName = Literal["local", "chatgpt", "claude", "gemini", "qwen", "deepseek"]
 RankingMode = Literal["deterministic", "llm_rerank"]
 RetrievalMode = Literal["lexical", "dense", "hybrid"]
 AttackType = Literal["targeted_promotion", "untargeted_degradation", "prompt_injection"]

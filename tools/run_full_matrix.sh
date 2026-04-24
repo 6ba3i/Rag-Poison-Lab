@@ -49,7 +49,7 @@ Options:
   --k INT                     Top-k for eval (default: 10)
   --repeat-count INT          Repeat count for eval (default: 1)
   --seed INT                  Base seed for eval (default: 42)
-  --profile NAME              Matrix profile: forty_mixed or full_matrix (default: forty_mixed)
+  --profile NAME              Matrix profile: forty_mixed (20 runs) or full_matrix (default: forty_mixed)
   --start-index INT           Start combo index (default: 0)
   --max-runs INT              Stop after N combos processed in this invocation
   --resume                    Resume from checkpoint under <results-root>/_state
@@ -829,24 +829,11 @@ load_matrix() {
     ranking_modes=("deterministic" "llm_rerank")
     poison_fractions=("0.2")
     model_specs=(
-      "chatgpt|gpt-5.4|gpt54"
-      "chatgpt|gpt-5.4-mini|gpt54m"
-      "chatgpt|gpt-4o|gpt4o"
-      "chatgpt|gpt-4.1|gpt41"
-      "claude|claude-sonnet-4-6|cl_s46"
-      "claude|claude-opus-4-6|cl_o46"
-      "claude|claude-haiku-4-5-20251001|cl_h45"
+      "chatgpt|gpt-5.4-pro|gpt54p"
+      "claude|claude-sonnet-4-6|cls46"
       "gemini|gemini-2.5-pro|ge25p"
-      "gemini|gemini-2.5-flash|ge25f"
-      "gemini|gemini-2.5-flash-lite|ge25fl"
-      "gemini|gemini-3-pro-preview|ge3p"
-      "gemini|gemini-3-flash-preview|ge3f"
-      "qwen|qwen3.6-plus|qw36p"
-      "qwen|qwen3.6-flash|qw36f"
-      "qwen|qwen3.5-plus|qw35p"
-      "qwen|qwen3.5-flash|qw35f"
-      "qwen|qwen3-4b|qw34b"
-      "qwen|qwen3-8b|qw38b"
+      "qwen|qwen3.6-max-preview|qw36mx"
+      "deepseek|deepseek-reasoner|dsrsn"
     )
 
     local attack_type target_boost_policy retrieval_mode ranking_mode poison_fraction victim_spec attacker_spec
@@ -871,49 +858,31 @@ load_matrix() {
       done
     done
   else
-    local attack_types ranking_modes
-    attack_types=("targeted_promotion" "untargeted_degradation" "prompt_injection")
-    ranking_modes=("deterministic" "llm_rerank")
+    local attack_types
+    attack_types=("targeted_promotion" "untargeted_degradation")
 
-    local core_pairs cross_pairs pair_spec
-    core_pairs=(
-      "chatgpt|gpt-5.4-mini|gpt54m|chatgpt|gpt-4.1|gpt41"
-      "chatgpt|gpt-4o|gpt4o|chatgpt|gpt-4.1|gpt41"
-      "claude|claude-sonnet-4-6|cls46|claude|claude-haiku-4-5-20251001|clh45"
-      "gemini|gemini-2.5-pro|ge25p|gemini|gemini-2.5-flash|ge25f"
-      "qwen|qwen3.6-plus|qw36p|qwen|qwen3.5-plus|qw35p"
-    )
-
+    local cross_pairs pair_spec
     cross_pairs=(
-      "chatgpt|gpt-5.4-mini|gpt54m|claude|claude-haiku-4-5-20251001|clh45"
-      "chatgpt|gpt-5.4-mini|gpt54m|gemini|gemini-2.5-flash|ge25f"
-      "chatgpt|gpt-4o|gpt4o|qwen|qwen3.5-plus|qw35p"
-      "chatgpt|gpt-4o|gpt4o|claude|claude-haiku-4-5-20251001|clh45"
-      "claude|claude-sonnet-4-6|cls46|chatgpt|gpt-4.1|gpt41"
-      "claude|claude-sonnet-4-6|cls46|gemini|gemini-2.5-flash|ge25f"
-      "gemini|gemini-2.5-pro|ge25p|chatgpt|gpt-4.1|gpt41"
-      "gemini|gemini-2.5-pro|ge25p|qwen|qwen3.5-plus|qw35p"
-      "qwen|qwen3.6-plus|qw36p|claude|claude-haiku-4-5-20251001|clh45"
-      "qwen|qwen3.6-plus|qw36p|gemini|gemini-2.5-flash|ge25f"
+      "chatgpt|gpt-5.4-pro|gpt54p|claude|claude-sonnet-4-6|cls46"
+      "claude|claude-sonnet-4-6|cls46|gemini|gemini-2.5-pro|ge25p"
+      "gemini|gemini-2.5-pro|ge25p|qwen|qwen3.6-max-preview|qw36mx"
+      "qwen|qwen3.6-max-preview|qw36mx|deepseek|deepseek-reasoner|dsrsn"
+      "deepseek|deepseek-reasoner|dsrsn|chatgpt|gpt-5.4-pro|gpt54p"
+      "chatgpt|gpt-5.4-pro|gpt54p|gemini|gemini-2.5-pro|ge25p"
+      "gemini|gemini-2.5-pro|ge25p|deepseek|deepseek-reasoner|dsrsn"
+      "deepseek|deepseek-reasoner|dsrsn|claude|claude-sonnet-4-6|cls46"
+      "claude|claude-sonnet-4-6|cls46|qwen|qwen3.6-max-preview|qw36mx"
+      "qwen|qwen3.6-max-preview|qw36mx|chatgpt|gpt-5.4-pro|gpt54p"
     )
 
-    local attack_type ranking_mode victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag
-    for pair_spec in "${core_pairs[@]}"; do
-      IFS='|' read -r victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag <<< "${pair_spec}"
-      for attack_type in "${attack_types[@]}"; do
-        for ranking_mode in "${ranking_modes[@]}"; do
-          COMBO_SPECS+=(
-            "${attack_type}|keyword_burst|hybrid|${ranking_mode}|${victim_provider}|${victim_model}|${victim_tag}|${attacker_provider}|${attacker_model}|${attacker_tag}|0.2|core"
-          )
-        done
-      done
-    done
-
+    local attack_type victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag
     for pair_spec in "${cross_pairs[@]}"; do
       IFS='|' read -r victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag <<< "${pair_spec}"
-      COMBO_SPECS+=(
-        "targeted_promotion|keyword_burst|hybrid|llm_rerank|${victim_provider}|${victim_model}|${victim_tag}|${attacker_provider}|${attacker_model}|${attacker_tag}|0.2|cross"
-      )
+      for attack_type in "${attack_types[@]}"; do
+        COMBO_SPECS+=(
+          "${attack_type}|keyword_burst|hybrid|llm_rerank|${victim_provider}|${victim_model}|${victim_tag}|${attacker_provider}|${attacker_model}|${attacker_tag}|0.2|cross20"
+        )
+      done
     done
   fi
 

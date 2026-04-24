@@ -7,24 +7,28 @@ _PROVIDER_API_KEY_ATTR = {
     "claude": "claude_api_key",
     "gemini": "gemini_api_key",
     "qwen": "qwen_api_key",
+    "deepseek": "deepseek_api_key",
 }
 _PROVIDER_API_KEY_ENV = {
     "chatgpt": "CHATGPT_API_KEY",
     "claude": "CLAUDE_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "qwen": "QWEN_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
 }
 _PROVIDER_BASE_URL_ATTR = {
     "chatgpt": "chatgpt_base_url",
     "claude": "claude_base_url",
     "gemini": "gemini_base_url",
     "qwen": "qwen_base_url",
+    "deepseek": "deepseek_base_url",
 }
 _PROVIDER_BASE_URL_ENV = {
     "chatgpt": "CHATGPT_BASE_URL",
     "claude": "CLAUDE_BASE_URL",
     "gemini": "GEMINI_BASE_URL",
     "qwen": "QWEN_BASE_URL",
+    "deepseek": "DEEPSEEK_BASE_URL",
 }
 _OPENAI_COMPAT_PROVIDERS = {"chatgpt", "claude", "gemini"}
 _OPENAI_COMPAT_API_KEY_ENV = "OPENAI_COMPAT_API_KEY"
@@ -65,7 +69,12 @@ def resolve_base_url(provider_name: str, settings: Settings) -> tuple[str | None
             return shared_url, f"env:{_OPENAI_COMPAT_BASE_URL_ENV}"
         return "https://api.openai.com/v1", "default:CHATGPT_BASE_URL"
 
+    if provider_name == "deepseek":
+        return "https://api.deepseek.com", "default:DEEPSEEK_BASE_URL"
+
     return None, "none"
+
+
 def _clean_value(raw: str | None) -> str | None:
     if raw is None:
         return None

@@ -8,19 +8,21 @@ from api.app.llm.credentials import resolve_api_key, resolve_base_url
 from api.app.llm.local_ollama import LocalOllamaProvider, check_ollama_connectivity, list_ollama_models
 from api.app.llm.providers_chatgpt import ChatGptProvider
 from api.app.llm.providers_claude import ClaudeProvider
+from api.app.llm.providers_deepseek import DeepSeekProvider
 from api.app.llm.providers_gemini import GeminiProvider
 from api.app.llm.providers_qwen import QwenProvider
 from api.app.settings import Settings
 from common.schemas.api_types import LlmProviderOption
 from common.schemas.llm_config import LlmConfig, default_llm_config
 
-PROVIDERS: tuple[str, ...] = ("local", "chatgpt", "claude", "gemini", "qwen")
+PROVIDERS: tuple[str, ...] = ("local", "chatgpt", "claude", "gemini", "qwen", "deepseek")
 PROVIDER_CLASSES = {
     "local": LocalOllamaProvider,
     "chatgpt": ChatGptProvider,
     "claude": ClaudeProvider,
     "gemini": GeminiProvider,
     "qwen": QwenProvider,
+    "deepseek": DeepSeekProvider,
 }
 
 
