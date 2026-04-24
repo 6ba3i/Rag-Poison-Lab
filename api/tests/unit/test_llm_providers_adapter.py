@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from api.app.llm import anthropic_client, gemini_client, local_ollama, openai_compatible, openai_responses_client
+from api.app.llm import anthropic_client, gemini_client, local_ollama, openai_compatible
 from api.app.llm.local_ollama import LocalOllamaProvider
 from api.app.llm.providers_chatgpt import ChatGptProvider
 from api.app.llm.providers_claude import ClaudeProvider
@@ -102,9 +102,9 @@ def test_chatgpt_provider_generate_with_api_key(monkeypatch: pytest.MonkeyPatch)
         captured["headers"] = headers
         captured["json"] = json
         captured["timeout"] = timeout
-        return FakeResponse(200, {"output_text": "chatgpt output"})
+        return FakeResponse(200, {"choices": [{"message": {"content": "chatgpt output"}}]})
 
-    monkeypatch.setattr(openai_responses_client.httpx, "post", fake_post)
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
 
     provider = ChatGptProvider(
         model="gpt-5.4-mini",
@@ -114,7 +114,7 @@ def test_chatgpt_provider_generate_with_api_key(monkeypatch: pytest.MonkeyPatch)
     text = provider.generate(prompt="hello", system="be brief")
 
     assert text == "chatgpt output"
-    assert captured["url"] == "https://api.openai.com/v1/responses"
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
     assert captured["timeout"] == 30.0
 
     headers = captured["headers"]
@@ -124,9 +124,11 @@ def test_chatgpt_provider_generate_with_api_key(monkeypatch: pytest.MonkeyPatch)
     payload = captured["json"]
     assert isinstance(payload, dict)
     assert payload["model"] == "gpt-5.4-mini"
-    assert payload["input"] == "hello"
-    assert payload["instructions"] == "be brief"
-    assert payload["max_output_tokens"] == 512
+    assert payload["messages"] == [
+        {"role": "system", "content": "be brief"},
+        {"role": "user", "content": "hello"},
+    ]
+    assert payload["max_tokens"] == 512
     assert provider.list_models() == ["gpt-5.4", "gpt-5.4-mini"]
     assert provider.healthcheck().available is True
 
@@ -242,9 +244,9 @@ def test_registry_chatgpt_env_only_key(monkeypatch: pytest.MonkeyPatch, tmp_path
         captured["headers"] = headers
         captured["json"] = json
         captured["timeout"] = timeout
-        return FakeResponse(200, {"output_text": "env output"})
+        return FakeResponse(200, {"choices": [{"message": {"content": "env output"}}]})
 
-    monkeypatch.setattr(openai_responses_client.httpx, "post", fake_post)
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
 
     options = {item.provider: item for item in registry.list_provider_options()}
     assert options["chatgpt"].available is True
@@ -270,15 +272,15 @@ def test_registry_chatgpt_uses_shared_openai_compat_key(monkeypatch: pytest.Monk
     def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
         captured["url"] = url
         captured["headers"] = headers
-        return FakeResponse(200, {"output_text": "shared output"})
+        return FakeResponse(200, {"choices": [{"message": {"content": "shared output"}}]})
 
-    monkeypatch.setattr(openai_responses_client.httpx, "post", fake_post)
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
 
     client = registry.get_provider_client(provider="chatgpt", model="gpt-5.4-mini")
     output = client.generate(prompt="hello")
     assert output == "shared output"
 
-    assert captured["url"] == "https://gateway.example/v1/responses"
+    assert captured["url"] == "https://gateway.example/v1/chat/completions"
     headers = captured["headers"]
     assert isinstance(headers, dict)
     assert headers["Authorization"] == "Bearer shared-transit-key"

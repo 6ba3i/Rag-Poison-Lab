@@ -23,6 +23,18 @@ def test_llm_config_normalizes_models() -> None:
     assert config.ranking_mode == "deterministic"
 
 
+def test_llm_config_canonicalizes_qwen_model_alias() -> None:
+    config = LlmConfig.model_validate(
+        {
+            "victim": {"provider": "qwen", "model": "qwen3.5-plus"},
+            "attacker": {"provider": "qwen", "model": "qwen3.5-plus"},
+        }
+    )
+
+    assert config.victim.model == "qwen-3.5-plus"
+    assert config.attacker.model == "qwen-3.5-plus"
+
+
 def test_llm_config_accepts_llm_rerank_mode() -> None:
     config = LlmConfig.model_validate(
         {

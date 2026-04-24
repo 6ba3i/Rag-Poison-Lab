@@ -66,6 +66,7 @@ def run_experiments(
     attack_config_path: Path | None = None,
     repeat_count: int = 1,
     seed: int = 42,
+    require_rerank_success: bool = False,
 ) -> dict[str, Any]:
     if k <= 0:
         raise ValueError("k must be >= 1")
@@ -77,7 +78,7 @@ def run_experiments(
         raise ValueError("seed must be >= 0")
 
     logger.info(
-        "eval_run_start mode=%s label=%s k=%s user_id=%s batch_size=%s repeat_count=%s seed=%s",
+        "eval_run_start mode=%s label=%s k=%s user_id=%s batch_size=%s repeat_count=%s seed=%s require_rerank_success=%s",
         mode,
         label,
         k,
@@ -85,6 +86,7 @@ def run_experiments(
         batch_size,
         repeat_count,
         seed,
+        require_rerank_success,
     )
 
     if repeat_count > 1:
@@ -101,6 +103,7 @@ def run_experiments(
             attack_config_path=attack_config_path,
             repeat_count=repeat_count,
             seed=seed,
+            require_rerank_success=require_rerank_success,
         )
 
     resolved_settings = settings or get_settings()
@@ -421,6 +424,14 @@ def run_experiments(
                 },
             }
 
+        if require_rerank_success and llm_config.ranking_mode == "llm_rerank":
+            _ensure_rerank_debug_success(
+                user_id=current_user_id,
+                baseline_debug=baseline_debug,
+                attacked_debug=attacked_debug,
+                defended_debug=defended_debug,
+            )
+
     if not per_user_rows:
         reason_text = _summarize_skip_reasons(skipped)
         raise RuntimeError(
@@ -477,6 +488,7 @@ def run_experiments(
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "repeat_count": repeat_count,
             "seed": seed,
+            "require_rerank_success": require_rerank_success,
         },
         "baseline": baseline_aggregate,
         "attacked": attacked_aggregate,
@@ -509,6 +521,7 @@ def run_experiments(
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "repeat_count": repeat_count,
         "seed": seed,
+        "require_rerank_success": require_rerank_success,
     }
     metrics_path, manifest_path = _write_metrics_and_manifest(
         run_dir=run_dir,
@@ -581,6 +594,7 @@ def _run_repeated_experiments(
     attack_config_path: Path | None,
     repeat_count: int,
     seed: int,
+    require_rerank_success: bool,
 ) -> dict[str, Any]:
     resolved_settings = settings or get_settings()
     resolved_es_client = es_client if es_client is not None else get_es_client()
@@ -628,6 +642,7 @@ def _run_repeated_experiments(
             attack_config_path=resolved_attack_config_path,
             repeat_count=1,
             seed=seed + repeat_index,
+            require_rerank_success=require_rerank_success,
         )
         repeat_summaries.append(repeat_summary)
         repeat_payloads.append(_load_metrics_payload(Path(str(repeat_summary["metrics_path"]))))
@@ -657,6 +672,7 @@ def _run_repeated_experiments(
             "seed": seed,
             "runtime_snapshot_paths": runtime_snapshot_paths,
             "repeat_run_dirs": [str(summary["run_dir"]) for summary in repeat_summaries],
+            "require_rerank_success": require_rerank_success,
         },
         "baseline": baseline,
         "attacked": attacked,
@@ -689,6 +705,7 @@ def _run_repeated_experiments(
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "repeat_count": repeat_count,
         "seed": seed,
+        "require_rerank_success": require_rerank_success,
     }
     metrics_path, manifest_path = _write_metrics_and_manifest(
         run_dir=run_dir,
@@ -712,6 +729,7 @@ def _run_repeated_experiments(
         "target_retrieval": target_retrieval,
         "repeat_count": repeat_count,
         "seed": seed,
+        "require_rerank_success": require_rerank_success,
         "runtime_snapshot_paths": runtime_snapshot_paths,
         "repeat_stats": repeat_stats,
     }
@@ -722,6 +740,50 @@ def _run_repeated_experiments(
     if warnings:
         summary["warnings"] = warnings
     return summary
+
+
+def _ensure_rerank_debug_success(
+    *,
+    user_id: int,
+    baseline_debug: dict[str, Any] | None,
+    attacked_debug: dict[str, Any] | None,
+    defended_debug: dict[str, Any] | None,
+) -> None:
+    failures: list[str] = []
+    debug_by_phase = [
+        ("baseline", baseline_debug),
+        ("attacked", attacked_debug),
+    ]
+    if defended_debug is not None:
+        debug_by_phase.append(("defended", defended_debug))
+
+    for phase, debug_payload in debug_by_phase:
+        if not isinstance(debug_payload, dict):
+            failures.append(f"{phase}:missing_debug_payload")
+            continue
+
+        requested = debug_payload.get("requested_ranking_mode")
+        attempted = debug_payload.get("rerank_attempted")
+        fallback = debug_payload.get("rerank_fallback")
+        fallback_reason = debug_payload.get("rerank_fallback_reason")
+        effective = debug_payload.get("effective_ranking_mode")
+
+        if requested != "llm_rerank":
+            failures.append(f"{phase}:requested_ranking_mode={requested!r}")
+            continue
+
+        if attempted is not True:
+            failures.append(f"{phase}:rerank_attempted={attempted!r}")
+        if effective != "llm_rerank":
+            failures.append(f"{phase}:effective_ranking_mode={effective!r}")
+        if fallback is not False:
+            failures.append(f"{phase}:rerank_fallback={fallback!r} reason={fallback_reason!r}")
+
+    if failures:
+        raise RuntimeError(
+            "Rerank strict mode violation: "
+            f"user_id={user_id}; " + "; ".join(failures)
+        )
 
 
 def resolve_run_dir(*, settings: Settings, label: str, results_root: Path | None = None) -> Path:

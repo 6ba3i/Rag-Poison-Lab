@@ -36,6 +36,7 @@ def evaluate_run(
     attack_config: Path | None = None,
     repeat_count: int = 1,
     seed: int = 42,
+    require_rerank_success: bool = False,
 ) -> dict[str, Any]:
     return run_experiments(
         mode=mode,
@@ -50,6 +51,7 @@ def evaluate_run(
         attack_config_path=attack_config.resolve() if attack_config is not None else None,
         repeat_count=repeat_count,
         seed=seed,
+        require_rerank_success=require_rerank_success,
     )
 
 
@@ -79,6 +81,11 @@ def eval_run(
     seed: int = typer.Option(42, min=0, help="Base random seed for repeated batch sampling"),
     results_root: Path | None = typer.Option(None, help="Override data/results/runs base path"),
     attack_config: Path | None = typer.Option(None, help="Path to attack config JSON"),
+    require_rerank_success: bool = typer.Option(
+        False,
+        "--require-rerank-success",
+        help="Fail evaluation if llm_rerank is requested but any recommendation falls back to deterministic ranking.",
+    ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Allow overwriting an existing run label"),
 ) -> None:
     """Run baseline vs attacked evaluation and write metrics artifacts."""
@@ -95,6 +102,7 @@ def eval_run(
             attack_config=attack_config,
             repeat_count=repeat_count,
             seed=seed,
+            require_rerank_success=require_rerank_success,
         )
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"Evaluation failed: {exc}")

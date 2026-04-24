@@ -832,7 +832,7 @@ load_matrix() {
       "chatgpt|gpt-5.4|gpt54"
       "claude|claude-sonnet-4-6|cls46"
       "gemini|gemini-2.5-pro|ge25p"
-      "qwen|qwen3.5-plus|qw35p"
+      "qwen|qwen-3.5-plus|qw35p"
       "deepseek|deepseek-reasoner|dsrsn"
     )
 
@@ -865,14 +865,14 @@ load_matrix() {
     cross_pairs=(
       "chatgpt|gpt-5.4|gpt54|claude|claude-sonnet-4-6|cls46"
       "claude|claude-sonnet-4-6|cls46|gemini|gemini-2.5-pro|ge25p"
-      "gemini|gemini-2.5-pro|ge25p|qwen|qwen3.5-plus|qw35p"
-      "qwen|qwen3.5-plus|qw35p|deepseek|deepseek-reasoner|dsrsn"
+      "gemini|gemini-2.5-pro|ge25p|qwen|qwen-3.5-plus|qw35p"
+      "qwen|qwen-3.5-plus|qw35p|deepseek|deepseek-reasoner|dsrsn"
       "deepseek|deepseek-reasoner|dsrsn|chatgpt|gpt-5.4|gpt54"
       "chatgpt|gpt-5.4|gpt54|gemini|gemini-2.5-pro|ge25p"
       "gemini|gemini-2.5-pro|ge25p|deepseek|deepseek-reasoner|dsrsn"
       "deepseek|deepseek-reasoner|dsrsn|claude|claude-sonnet-4-6|cls46"
-      "claude|claude-sonnet-4-6|cls46|qwen|qwen3.5-plus|qw35p"
-      "qwen|qwen3.5-plus|qw35p|chatgpt|gpt-5.4|gpt54"
+      "claude|claude-sonnet-4-6|cls46|qwen|qwen-3.5-plus|qw35p"
+      "qwen|qwen-3.5-plus|qw35p|chatgpt|gpt-5.4|gpt54"
     )
 
     local attack_type victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag
@@ -954,10 +954,42 @@ run_combo() {
     failed_step="attack_build_poisoned"
   elif ! run_step "${run_log}" "index_poisoned" "${combo_index}" "${label}" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli index poisoned; then
     failed_step="index_poisoned"
-  elif ! run_step "${run_log}" "eval_run" "${combo_index}" "${label}" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli eval run --mode "${EVAL_MODE}" --label "${label}" --k "${K}" --repeat-count "${REPEAT_COUNT}" --seed "${SEED}" --results-root "${RESULTS_ROOT}" --overwrite; then
-    failed_step="eval_run"
-  elif ! run_step "${run_log}" "report_generate" "${combo_index}" "${label}" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli report generate --label "${label}" --results-root "${RESULTS_ROOT}"; then
-    failed_step="report_generate"
+  else
+    local -a eval_cmd
+    eval_cmd=(
+      env
+      "ELASTICSEARCH_URL=${ES_URL}"
+      uv
+      run
+      --project
+      api
+      python
+      -m
+      api.app.cli.cli
+      eval
+      run
+      --mode
+      "${EVAL_MODE}"
+      --label
+      "${label}"
+      --k
+      "${K}"
+      --repeat-count
+      "${REPEAT_COUNT}"
+      --seed
+      "${SEED}"
+      --results-root
+      "${RESULTS_ROOT}"
+      --overwrite
+    )
+    if [[ "${ranking_mode}" == "llm_rerank" ]]; then
+      eval_cmd+=(--require-rerank-success)
+    fi
+    if ! run_step "${run_log}" "eval_run" "${combo_index}" "${label}" "${eval_cmd[@]}"; then
+      failed_step="eval_run"
+    elif ! run_step "${run_log}" "report_generate" "${combo_index}" "${label}" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli report generate --label "${label}" --results-root "${RESULTS_ROOT}"; then
+      failed_step="report_generate"
+    fi
   fi
 
   if [[ -n "${failed_step}" ]]; then

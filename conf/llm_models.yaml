@@ -5,7 +5,7 @@ claude:
 gemini:
   - gemini-2.5-pro
 qwen:
-  - qwen3.5-plus
+  - qwen-3.5-plus
 deepseek:
   - deepseek-reasoner
   - deepseek-chat

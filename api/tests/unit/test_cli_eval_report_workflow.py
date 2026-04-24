@@ -622,6 +622,115 @@ def test_eval_runner_rerank_preflight_reports_missing_local_model(monkeypatch, t
     assert "Run: ollama pull qwen2.5:1.5b" in message
 
 
+def test_eval_runner_strict_rerank_fails_when_generation_falls_back(monkeypatch, tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    _write_bulk_fixtures(settings.resolved_processed_dir)
+    settings.resolved_llm_config_path.write_text(
+        json.dumps(
+            {
+                "victim": {"provider": "chatgpt", "model": "gpt-5.4"},
+                "attacker": {"provider": "chatgpt", "model": "gpt-5.4"},
+                "ranking_mode": "llm_rerank",
+                "retrieval_mode": "hybrid",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _HealthyStatus:
+        available = True
+        healthy = True
+        message = ""
+
+    class _FailingClient:
+        def healthcheck(self) -> _HealthyStatus:
+            return _HealthyStatus()
+
+        def generate(self, **kwargs: object) -> str:
+            del kwargs
+            raise RuntimeError("simulated gateway failure")
+
+    class _FailingRegistry:
+        def __init__(self, *, settings: Settings) -> None:
+            del settings
+
+        def get_victim_client(self) -> _FailingClient:
+            return _FailingClient()
+
+    monkeypatch.setattr(eval_runner, "LlmRegistry", _FailingRegistry)
+
+    with pytest.raises(RuntimeError, match="Rerank strict mode violation"):
+        run_experiments(
+            mode="single",
+            label="strict_rerank_failure",
+            user_id=1,
+            batch_size=1,
+            k=10,
+            settings=settings,
+            es_client=FakeElasticsearch(),
+            results_root=tmp_path / "runs",
+            require_rerank_success=True,
+        )
+
+
+def test_eval_runner_strict_rerank_succeeds_when_rerank_is_effective(monkeypatch, tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    _write_bulk_fixtures(settings.resolved_processed_dir)
+    settings.resolved_llm_config_path.write_text(
+        json.dumps(
+            {
+                "victim": {"provider": "chatgpt", "model": "gpt-5.4"},
+                "attacker": {"provider": "chatgpt", "model": "gpt-5.4"},
+                "ranking_mode": "llm_rerank",
+                "retrieval_mode": "hybrid",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _HealthyStatus:
+        available = True
+        healthy = True
+        message = ""
+
+    class _SuccessfulClient:
+        def healthcheck(self) -> _HealthyStatus:
+            return _HealthyStatus()
+
+        def generate(self, **kwargs: object) -> str:
+            del kwargs
+            return "[1, 2]"
+
+    class _SuccessfulRegistry:
+        def __init__(self, *, settings: Settings) -> None:
+            del settings
+
+        def get_victim_client(self) -> _SuccessfulClient:
+            return _SuccessfulClient()
+
+    monkeypatch.setattr(eval_runner, "LlmRegistry", _SuccessfulRegistry)
+
+    summary = run_experiments(
+        mode="single",
+        label="strict_rerank_success",
+        user_id=1,
+        batch_size=1,
+        k=10,
+        settings=settings,
+        es_client=FakeElasticsearch(),
+        results_root=tmp_path / "runs",
+        require_rerank_success=True,
+    )
+
+    assert summary["mode"] == "single"
+    assert summary["attack_trace_path"].endswith("attack_trace.json")
+    trace_payload = json.loads(Path(summary["attack_trace_path"]).read_text(encoding="utf-8"))
+    assert trace_payload["baseline_debug"]["effective_ranking_mode"] == "llm_rerank"
+    assert trace_payload["baseline_debug"]["rerank_fallback"] is False
+    assert trace_payload["attacked_debug"]["effective_ranking_mode"] == "llm_rerank"
+    assert trace_payload["attacked_debug"]["rerank_fallback"] is False
+
+
 def test_eval_runner_rejects_label_overwrite_by_default(tmp_path: Path) -> None:
     settings = _build_settings(tmp_path)
     runs_root = tmp_path / "runs"
