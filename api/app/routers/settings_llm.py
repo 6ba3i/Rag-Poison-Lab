@@ -5,6 +5,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.app.llm.registry import LlmRegistry
+from api.app.services.config_reindex_service import trigger_config_reindex
 from api.app.settings import Settings, get_llm_registry, get_settings
 from common.schemas.api_types import LlmSettingsOptionsResponse
 from common.schemas.llm_config import LlmConfig, default_llm_config
@@ -37,6 +38,7 @@ def put_llm_settings(
             )
 
     _save_llm_config(settings, config)
+    trigger_config_reindex(settings=settings, reason="llm_config_updated")
     return config
 
 

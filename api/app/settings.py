@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     deepseek_base_url: str | None = None
     deepseek_api_key: str | None = None
 
+    auto_reindex_on_config_change: bool = True
+    auto_reindex_es_url: str = "http://localhost:9200"
+
     repo_root: Path = _REPO_ROOT
     data_root: Path | None = None
     config_root: Path | None = None

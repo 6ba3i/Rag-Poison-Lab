@@ -23,6 +23,7 @@ class ChatGptProvider(LlmProvider):
         self.curated_models = curated_models
         self.base_url = (base_url or "https://api.openai.com/v1").strip() or "https://api.openai.com/v1"
         self.timeout = timeout
+        self.last_response_model: str | None = None
 
     def generate(
         self,
@@ -38,7 +39,7 @@ class ChatGptProvider(LlmProvider):
             raise RuntimeError("ChatGPT provider is unavailable: missing API key environment configuration")
 
         client = OpenAICompatibleClient(base_url=self.base_url, api_key=api_key, timeout=self.timeout)
-        return client.generate(
+        text = client.generate(
             model=self.model,
             prompt=prompt,
             system=system,
@@ -46,6 +47,8 @@ class ChatGptProvider(LlmProvider):
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        self.last_response_model = client.last_response_model
+        return text
 
     def healthcheck(self) -> ProviderStatus:
         available = self._resolve_api_key() is not None

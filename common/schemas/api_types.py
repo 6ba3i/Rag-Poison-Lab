@@ -99,6 +99,15 @@ class TraceResponse(BaseModel):
     rerank_parsed_order: list[int] | None = None
     rerank_fallback: bool | None = None
     rerank_fallback_reason: str | None = None
+    rerank_response_model: str | None = None
+    rerank_error: str | None = None
+    rerank_provider: ProviderName | None = None
+    rerank_model: str | None = None
+    rerank_base_url: str | None = None
+    rerank_base_url_source: str | None = None
+    rerank_uses_victim_only: bool = False
+    attacker_provider: ProviderName | None = None
+    attacker_model: str | None = None
     retrieval_debug: dict[str, Any] | None = None
 
 

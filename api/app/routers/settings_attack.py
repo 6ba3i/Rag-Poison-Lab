@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from api.app.services.config_reindex_service import trigger_config_reindex
 from api.app.settings import Settings, get_settings
 from common.schemas.api_types import AttackSettingsRequest, AttackSettingsResponse
 from common.schemas.attack_config import AttackConfig, load_attack_config
@@ -35,6 +36,7 @@ def put_attack_settings(
     config_path = settings.resolved_attack_config_path
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(config.model_dump(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    trigger_config_reindex(settings=settings, reason="attack_config_updated")
     return _build_attack_response(config=config, config_path=config_path, config_exists=True)
 
 

@@ -135,6 +135,20 @@ def run_experiments(
         attack_config=attack_config,
         users_service=users_service,
     )
+    if (
+        llm_config.ranking_mode == "llm_rerank"
+        and (
+            llm_config.victim.provider != llm_config.attacker.provider
+            or llm_config.victim.model != llm_config.attacker.model
+        )
+    ):
+        warning = (
+            "LLM rerank uses victim model only; attacker model is not used in rerank path "
+            f"(victim={llm_config.victim.provider}:{llm_config.victim.model}, "
+            f"attacker={llm_config.attacker.provider}:{llm_config.attacker.model})."
+        )
+        eval_warnings.append(warning)
+        logger.warning(warning)
     selected_user_ids = _resolve_user_ids(
         users_service=users_service,
         mode=mode,
@@ -485,6 +499,8 @@ def run_experiments(
             "index_provenance": index_provenance,
             "runtime_snapshot_paths": runtime_snapshot_paths,
             "metric_keys": list(metric_keys),
+            "llm_config": llm_config.model_dump(),
+            "rerank_uses_victim_only": llm_config.ranking_mode == "llm_rerank",
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "repeat_count": repeat_count,
             "seed": seed,
@@ -518,6 +534,8 @@ def run_experiments(
         "defense_config_path": str(defense_config_path),
         "index_provenance": index_provenance,
         "runtime_snapshot_paths": runtime_snapshot_paths,
+        "llm_config": llm_config.model_dump(),
+        "rerank_uses_victim_only": llm_config.ranking_mode == "llm_rerank",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "repeat_count": repeat_count,
         "seed": seed,

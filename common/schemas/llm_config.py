@@ -11,11 +11,17 @@ RetrievalMode = Literal["lexical", "dense", "hybrid"]
 _QWEN_MODEL_ALIASES: dict[str, str] = {
     "qwen3.5-plus": "qwen-3.5-plus",
 }
+_DEEPSEEK_MODEL_ALIASES: dict[str, str] = {
+    "deepseek-reasoner": "deepseek-v4-pro",
+    "deepseek-chat": "deepseek-v4-pro",
+}
 
 
 def canonicalize_model_name(*, provider: ProviderName, model: str) -> str:
     if provider == "qwen":
         return _QWEN_MODEL_ALIASES.get(model, model)
+    if provider == "deepseek":
+        return _DEEPSEEK_MODEL_ALIASES.get(model, model)
     return model
 
 

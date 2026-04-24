@@ -140,6 +140,8 @@ def test_generation_failure_triggers_fallback() -> None:
     assert result.effective_ranking_mode == "deterministic"
     assert result.rerank_attempted is True
     assert result.rerank_fallback_reason == "generation_failed"
+    assert result.rerank_error is not None
+    assert result.rerank_error.startswith("RuntimeError:")
 
 
 def test_json_array_with_surrounding_text_is_accepted() -> None:

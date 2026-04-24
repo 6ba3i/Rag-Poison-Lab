@@ -7,5 +7,4 @@ gemini:
 qwen:
   - qwen-3.5-plus
 deepseek:
-  - deepseek-reasoner
-  - deepseek-chat
+  - deepseek-v4-pro

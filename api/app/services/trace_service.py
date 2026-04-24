@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from api.app.llm.credentials import resolve_base_url
 from api.app.services.recs_service import (
     INDEX_BY_MODE,
     _retrieve_candidates,
@@ -74,15 +75,22 @@ class TraceService:
             )
 
         if llm_config.ranking_mode == "llm_rerank":
+            victim_client = self._get_victim_client()
+            rerank_base_url = _clean_optional_str(getattr(victim_client, "base_url", None))
+            rerank_base_url_source: str | None = None
+            if llm_config.victim.provider != "local":
+                _, rerank_base_url_source = resolve_base_url(llm_config.victim.provider, self.settings)
             ranking = rank_candidates_for_mode(
                 context=context,
                 candidates=candidates,
                 ranking_mode=llm_config.ranking_mode,
                 k=max(1, min(10, len(candidates))),
-                llm_client=self._get_victim_client(),
+                llm_client=victim_client,
                 prompt_candidates=candidates,
             )
         else:
+            rerank_base_url = None
+            rerank_base_url_source = None
             ranking = rank_candidates_for_mode(
                 context=context,
                 candidates=candidates,
@@ -105,6 +113,15 @@ class TraceService:
             "rerank_parsed_order": ranking.rerank_parsed_order,
             "rerank_fallback": ranking.rerank_fallback,
             "rerank_fallback_reason": ranking.rerank_fallback_reason,
+            "rerank_response_model": ranking.rerank_response_model,
+            "rerank_error": ranking.rerank_error,
+            "rerank_provider": llm_config.victim.provider if llm_config.ranking_mode == "llm_rerank" else None,
+            "rerank_model": llm_config.victim.model if llm_config.ranking_mode == "llm_rerank" else None,
+            "rerank_base_url": rerank_base_url,
+            "rerank_base_url_source": rerank_base_url_source,
+            "rerank_uses_victim_only": llm_config.ranking_mode == "llm_rerank",
+            "attacker_provider": llm_config.attacker.provider,
+            "attacker_model": llm_config.attacker.model,
             "retrieval_debug": retrieval_result.debug,
         }
 
@@ -116,3 +133,12 @@ class TraceService:
             return self.llm_registry.get_victim_client()
         except Exception:  # noqa: BLE001
             return None
+
+
+def _clean_optional_str(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if cleaned == "":
+        return None
+    return cleaned

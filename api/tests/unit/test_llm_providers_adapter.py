@@ -218,7 +218,7 @@ def test_deepseek_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
         return FakeResponse(200, {"choices": [{"message": {"content": "deepseek output"}}]})
 
     monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
-    provider = DeepSeekProvider(model="deepseek-reasoner", api_key="deepseek-key", curated_models=["deepseek-reasoner"])
+    provider = DeepSeekProvider(model="deepseek-v4-pro", api_key="deepseek-key", curated_models=["deepseek-v4-pro"])
     output = provider.generate(prompt="hello")
 
     assert output == "deepseek output"
@@ -227,6 +227,23 @@ def test_deepseek_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(headers, dict)
     assert headers["Authorization"] == "Bearer deepseek-key"
     assert provider.healthcheck().healthy is True
+
+
+def test_openai_compatible_extract_text_uses_reasoning_content_when_content_empty() -> None:
+    body = {
+        "model": "deepseek-v4-pro",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "[3,1,2]",
+                }
+            }
+        ],
+    }
+
+    assert openai_compatible._extract_text(body) == "[3,1,2]"
 
 
 def test_registry_chatgpt_env_only_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -307,7 +324,7 @@ def test_registry_provider_mapping_and_role_reload(monkeypatch: pytest.MonkeyPat
                 "qwen:",
                 "  - qwen3.6-plus",
                 "deepseek:",
-                "  - deepseek-chat",
+                "  - deepseek-v4-pro",
             ]
         )
         + "\n",

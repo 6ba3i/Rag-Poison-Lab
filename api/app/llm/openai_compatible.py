@@ -10,6 +10,7 @@ class OpenAICompatibleClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.last_response_model: str | None = None
 
     def generate(
         self,
@@ -43,6 +44,7 @@ class OpenAICompatibleClient:
             "Content-Type": "application/json",
         }
 
+        self.last_response_model = None
         try:
             response = httpx.post(
                 f"{self.base_url}/chat/completions",
@@ -55,12 +57,26 @@ class OpenAICompatibleClient:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"OpenAI-compatible request failed: {exc}") from exc
 
-        return _extract_text(body)
+        text, response_model = _extract_text_and_model(body)
+        self.last_response_model = response_model
+        return text
 
 
 def _extract_text(body: object) -> str:
+    text, _ = _extract_text_and_model(body)
+    return text
+
+
+def _extract_text_and_model(body: object) -> tuple[str, str | None]:
     if not isinstance(body, dict):
         raise RuntimeError("OpenAI-compatible response must be a JSON object")
+
+    response_model: str | None = None
+    raw_model = body.get("model")
+    if isinstance(raw_model, str):
+        cleaned = raw_model.strip()
+        if cleaned != "":
+            response_model = cleaned
 
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -78,7 +94,7 @@ def _extract_text(body: object) -> str:
     if isinstance(content, str):
         text = content.strip()
         if text:
-            return text
+            return text, response_model
 
     if isinstance(content, list):
         parts: list[str] = []
@@ -92,6 +108,12 @@ def _extract_text(body: object) -> str:
                 parts.append(text)
         joined = "\n".join(parts).strip()
         if joined:
-            return joined
+            return joined, response_model
+
+    reasoning_content = message.get("reasoning_content")
+    if isinstance(reasoning_content, str):
+        text = reasoning_content.strip()
+        if text:
+            return text, response_model
 
     raise RuntimeError("OpenAI-compatible response did not include text content")

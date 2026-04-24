@@ -416,6 +416,41 @@ llm_payload["attacker"] = {
 
 attack_path.write_text(json.dumps(attack_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 llm_path.write_text(json.dumps(llm_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+written_attack = json.loads(attack_path.read_text(encoding="utf-8"))
+written_llm = json.loads(llm_path.read_text(encoding="utf-8"))
+if not isinstance(written_attack, dict):
+    raise SystemExit("written attack config is not a JSON object")
+if not isinstance(written_llm, dict):
+    raise SystemExit("written llm config is not a JSON object")
+
+if str(written_llm.get("retrieval_mode", "")) != os.environ["RETRIEVAL_MODE"]:
+    raise SystemExit("llm_config retrieval_mode mismatch after write")
+if str(written_llm.get("ranking_mode", "")) != os.environ["RANKING_MODE"]:
+    raise SystemExit("llm_config ranking_mode mismatch after write")
+
+victim = written_llm.get("victim")
+attacker = written_llm.get("attacker")
+if not isinstance(victim, dict) or not isinstance(attacker, dict):
+    raise SystemExit("llm_config victim/attacker sections are invalid after write")
+
+if str(victim.get("provider", "")) != os.environ["VICTIM_PROVIDER"] or str(victim.get("model", "")) != os.environ["VICTIM_MODEL"]:
+    raise SystemExit("llm_config victim mismatch after write")
+if str(attacker.get("provider", "")) != os.environ["ATTACKER_PROVIDER"] or str(attacker.get("model", "")) != os.environ["ATTACKER_MODEL"]:
+    raise SystemExit("llm_config attacker mismatch after write")
+
+if str(written_attack.get("attack_type", "")) != os.environ["ATTACK_TYPE"]:
+    raise SystemExit("attack_config attack_type mismatch after write")
+if str(written_attack.get("target_boost_policy", "")) != os.environ["TARGET_BOOST_POLICY"]:
+    raise SystemExit("attack_config target_boost_policy mismatch after write")
+
+try:
+    poison_fraction = float(written_attack.get("poison_fraction"))
+except Exception as exc:  # noqa: BLE001
+    raise SystemExit(f"attack_config poison_fraction invalid after write: {exc}") from exc
+
+if abs(poison_fraction - float(os.environ["POISON_FRACTION"])) > 1e-12:
+    raise SystemExit("attack_config poison_fraction mismatch after write")
 PY
 }
 
@@ -833,7 +868,7 @@ load_matrix() {
       "claude|claude-sonnet-4-6|cls46"
       "gemini|gemini-2.5-pro|ge25p"
       "qwen|qwen-3.5-plus|qw35p"
-      "deepseek|deepseek-reasoner|dsrsn"
+      "deepseek|deepseek-v4-pro|dsv4p"
     )
 
     local attack_type target_boost_policy retrieval_mode ranking_mode poison_fraction victim_spec attacker_spec
@@ -866,11 +901,11 @@ load_matrix() {
       "chatgpt|gpt-5.4|gpt54|claude|claude-sonnet-4-6|cls46"
       "claude|claude-sonnet-4-6|cls46|gemini|gemini-2.5-pro|ge25p"
       "gemini|gemini-2.5-pro|ge25p|qwen|qwen-3.5-plus|qw35p"
-      "qwen|qwen-3.5-plus|qw35p|deepseek|deepseek-reasoner|dsrsn"
-      "deepseek|deepseek-reasoner|dsrsn|chatgpt|gpt-5.4|gpt54"
+      "qwen|qwen-3.5-plus|qw35p|deepseek|deepseek-v4-pro|dsv4p"
+      "deepseek|deepseek-v4-pro|dsv4p|chatgpt|gpt-5.4|gpt54"
       "chatgpt|gpt-5.4|gpt54|gemini|gemini-2.5-pro|ge25p"
-      "gemini|gemini-2.5-pro|ge25p|deepseek|deepseek-reasoner|dsrsn"
-      "deepseek|deepseek-reasoner|dsrsn|claude|claude-sonnet-4-6|cls46"
+      "gemini|gemini-2.5-pro|ge25p|deepseek|deepseek-v4-pro|dsv4p"
+      "deepseek|deepseek-v4-pro|dsv4p|claude|claude-sonnet-4-6|cls46"
       "claude|claude-sonnet-4-6|cls46|qwen|qwen-3.5-plus|qw35p"
       "qwen|qwen-3.5-plus|qw35p|chatgpt|gpt-5.4|gpt54"
     )

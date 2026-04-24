@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from api.app.llm.credentials import resolve_base_url
 from api.app.settings import Settings
 from api.app.services.defense_service import apply_retrieval_defense, sanitize_candidates_for_prompt
 from api.app.services.users_service import UsersService
@@ -35,6 +36,7 @@ RERANK_PROMPT_TRACE_MAX_CHARS = 1600
 RERANK_FIELD_MAX_CHARS = 120
 RERANK_SYNOPSIS_MAX_CHARS = 140
 RERANK_PAYLOAD_MAX_CHARS = 100
+RERANK_ERROR_MAX_CHARS = 240
 DEBUG_CANDIDATE_LIMIT = 20
 YEAR_SUFFIX_PATTERN = re.compile(r"\((\d{4})\)\s*$")
 JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
@@ -73,6 +75,8 @@ class RankingResult:
     rerank_fallback: bool | None = None
     rerank_attempted: bool | None = None
     rerank_fallback_reason: str | None = None
+    rerank_response_model: str | None = None
+    rerank_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +187,7 @@ def rank_candidates_for_mode(
             )
         ).strip()
     except Exception as exc:  # noqa: BLE001
+        rerank_error = _truncate(f"{type(exc).__name__}: {exc}", RERANK_ERROR_MAX_CHARS)
         logger.warning("LLM rerank fallback: generation failed: %s", exc)
         return RankingResult(
             requested_ranking_mode=ranking_mode,
@@ -193,8 +198,10 @@ def rank_candidates_for_mode(
             rerank_fallback=True,
             rerank_attempted=True,
             rerank_fallback_reason="generation_failed",
+            rerank_error=rerank_error,
         )
 
+    rerank_response_model = _clean_optional_str(getattr(llm_client, "last_response_model", None))
     parsed_order, parse_fallback_reason = _parse_rerank_order(raw_response, candidate_count=len(prompt_pool))
     if parsed_order is None:
         return RankingResult(
@@ -207,6 +214,7 @@ def rank_candidates_for_mode(
             rerank_fallback=True,
             rerank_attempted=True,
             rerank_fallback_reason=parse_fallback_reason or "parse_failed",
+            rerank_response_model=rerank_response_model,
         )
 
     score_by_movie = {item.candidate.movie_id: item.score for item in deterministic_ranked}
@@ -247,6 +255,7 @@ def rank_candidates_for_mode(
         rerank_parsed_order=parsed_order,
         rerank_fallback=False,
         rerank_attempted=True,
+        rerank_response_model=rerank_response_model,
     )
 
 
@@ -262,6 +271,7 @@ class RecsService:
         self.es_client = es_client
         self.llm_registry = llm_registry
         self._rerank_victim_unavailable_warned = False
+        self._rerank_attacker_ignored_warned = False
 
     def recommend(
         self,
@@ -324,6 +334,22 @@ class RecsService:
             raise ValueError("seen_history_split must be one of: all, train")
 
         llm_config = load_llm_config(settings=self.settings)
+        if (
+            llm_config.ranking_mode == "llm_rerank"
+            and not self._rerank_attacker_ignored_warned
+            and (
+                llm_config.victim.provider != llm_config.attacker.provider
+                or llm_config.victim.model != llm_config.attacker.model
+            )
+        ):
+            logger.warning(
+                "LLM rerank uses victim model only: victim=%s:%s attacker=%s:%s (attacker is not used in rerank path)",
+                llm_config.victim.provider,
+                llm_config.victim.model,
+                llm_config.attacker.provider,
+                llm_config.attacker.model,
+            )
+            self._rerank_attacker_ignored_warned = True
         active_defense = (
             defense_config_override
             if mode == "attacked" and defense_config_override is not None and defense_config_override.enabled
@@ -404,6 +430,10 @@ class RecsService:
         prompt_candidates, prompt_defense_debug = sanitize_candidates_for_prompt(candidates=candidates, config=active_defense)
 
         victim_client = self._get_victim_client()
+        rerank_base_url = _clean_optional_str(getattr(victim_client, "base_url", None))
+        rerank_base_url_source: str | None = None
+        if llm_config.ranking_mode == "llm_rerank" and llm_config.victim.provider != "local":
+            _, rerank_base_url_source = resolve_base_url(llm_config.victim.provider, self.settings)
         log_victim_unavailable = True
         if llm_config.ranking_mode == "llm_rerank" and victim_client is None:
             log_victim_unavailable = not self._rerank_victim_unavailable_warned
@@ -497,6 +527,15 @@ class RecsService:
                 "rerank_parsed_order": ranking.rerank_parsed_order,
                 "rerank_fallback": ranking.rerank_fallback,
                 "rerank_fallback_reason": ranking.rerank_fallback_reason,
+                "rerank_response_model": ranking.rerank_response_model,
+                "rerank_error": ranking.rerank_error,
+                "rerank_provider": llm_config.victim.provider if llm_config.ranking_mode == "llm_rerank" else None,
+                "rerank_model": llm_config.victim.model if llm_config.ranking_mode == "llm_rerank" else None,
+                "rerank_base_url": rerank_base_url,
+                "rerank_base_url_source": rerank_base_url_source,
+                "rerank_uses_victim_only": llm_config.ranking_mode == "llm_rerank",
+                "attacker_provider": llm_config.attacker.provider,
+                "attacker_model": llm_config.attacker.model,
                 "final_ranked_movie_ids": [int(item["movie_id"]) for item in output],
             }
             if ranking.rerank_prompt is not None:
@@ -657,6 +696,15 @@ def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars].rstrip() + "..."
+
+
+def _clean_optional_str(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if cleaned == "":
+        return None
+    return cleaned
 
 
 def _movie_popularity_priorities(*, users_service: UsersService) -> dict[int, tuple[int, float]]:

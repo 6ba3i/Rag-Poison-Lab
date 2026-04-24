@@ -35,6 +35,18 @@ def test_llm_config_canonicalizes_qwen_model_alias() -> None:
     assert config.attacker.model == "qwen-3.5-plus"
 
 
+def test_llm_config_canonicalizes_deepseek_model_aliases() -> None:
+    config = LlmConfig.model_validate(
+        {
+            "victim": {"provider": "deepseek", "model": "deepseek-reasoner"},
+            "attacker": {"provider": "deepseek", "model": "deepseek-chat"},
+        }
+    )
+
+    assert config.victim.model == "deepseek-v4-pro"
+    assert config.attacker.model == "deepseek-v4-pro"
+
+
 def test_llm_config_accepts_llm_rerank_mode() -> None:
     config = LlmConfig.model_validate(
         {

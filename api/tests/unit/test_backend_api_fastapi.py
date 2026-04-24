@@ -200,7 +200,7 @@ def backend_client(tmp_path: Path) -> TestClient:
                 "qwen:",
                 "  - qwen-plus",
                 "deepseek:",
-                "  - deepseek-chat",
+                "  - deepseek-v4-pro",
             ]
         )
         + "\n",
@@ -282,6 +282,7 @@ def backend_client(tmp_path: Path) -> TestClient:
         static_root=static_dir,
         llm_models_file=conf_dir / "llm_models.yaml",
         chatgpt_api_key="secret-chatgpt-key",
+        auto_reindex_on_config_change=False,
     )
 
     app.dependency_overrides[get_settings] = lambda: test_settings
@@ -516,7 +517,7 @@ def test_llm_options_reads_provider_keys_from_repo_env_files(
                 "qwen:",
                 "  - qwen-plus",
                 "deepseek:",
-                "  - deepseek-chat",
+                "  - deepseek-v4-pro",
             ]
         )
         + "\n",
@@ -535,6 +536,7 @@ def test_llm_options_reads_provider_keys_from_repo_env_files(
             config_root=config_dir,
             static_root=static_dir,
             llm_models_file=conf_dir / "llm_models.yaml",
+            auto_reindex_on_config_change=False,
         )
         registry = LlmRegistry(settings=test_settings)
         monkeypatch.setattr(registry, "list_local_models", lambda: ["qwen2.5:1.5b"])
