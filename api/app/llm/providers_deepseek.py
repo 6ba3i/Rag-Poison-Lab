@@ -22,12 +22,16 @@ class DeepSeekProvider(LlmProvider):
         curated_models: list[str],
         base_url: str | None = None,
         timeout: float = 30.0,
+        max_retries: int = 1,
+        retry_backoff_seconds: float = 0.0,
     ) -> None:
         super().__init__(model=model)
         self.api_key = api_key.strip() if api_key is not None else None
         self.curated_models = curated_models
         self.base_url = (base_url or "https://api.deepseek.com").strip() or "https://api.deepseek.com"
         self.timeout = timeout
+        self.max_retries = max(0, int(max_retries))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
         self.last_response_model: str | None = None
 
     def generate(
@@ -44,7 +48,13 @@ class DeepSeekProvider(LlmProvider):
         api_key = self._resolve_api_key()
         if api_key is None:
             raise RuntimeError("DeepSeek provider is unavailable: missing API key environment configuration")
-        client = OpenAICompatibleClient(base_url=self.base_url, api_key=api_key, timeout=self.timeout)
+        client = OpenAICompatibleClient(
+            base_url=self.base_url,
+            api_key=api_key,
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
         text = client.generate(
             model=self.model,
             prompt=prompt,

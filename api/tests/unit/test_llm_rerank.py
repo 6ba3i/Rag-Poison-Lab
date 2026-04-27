@@ -29,6 +29,23 @@ class _FailingLlm:
         raise RuntimeError("generation exploded")
 
 
+class _TimeoutThenSuccessLlm:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.calls = 0
+
+    def generate(self, **_: object) -> str:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("Claude request failed: The read operation timed out")
+        return self.response
+
+
+class _AlwaysTimeoutLlm:
+    def generate(self, **_: object) -> str:
+        raise RuntimeError("Claude request failed: The read operation timed out")
+
+
 class _SequenceLlm:
     def __init__(self, responses: list[str]) -> None:
         self._responses = list(responses)
@@ -162,8 +179,41 @@ def test_invalid_json_repair_retry_can_succeed() -> None:
     assert "previous response did not match the required json format" in str(llm.calls[1].get("prompt", "")).lower()
 
 
+def test_invalid_json_repair_final_retry_can_succeed() -> None:
+    llm = _SequenceLlm(
+        [
+            "not-json",
+            "Here is the JSON requested: ```json",
+            "[3,1,2]",
+        ]
+    )
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=llm,
+    )
+
+    assert _ids(result.ranked) == [30, 10, 20]
+    assert result.rerank_fallback is False
+    assert result.rerank_attempted is True
+    assert result.rerank_retry_attempted is True
+    assert result.rerank_raw_response == "not-json"
+    assert result.rerank_retry_raw_response == "[3,1,2]"
+    assert len(llm.calls) == 3
+    assert "previous response did not match the required json format" in str(llm.calls[1].get("prompt", "")).lower()
+    assert "raw json only" in str(llm.calls[2].get("prompt", "")).lower()
+
+
 def test_invalid_json_repair_retry_failure_records_retry_stage() -> None:
-    llm = _SequenceLlm(["not-json", "still-not-json"])
+    llm = _SequenceLlm(
+        [
+            "not-json",
+            "Here is the JSON requested: ```json",
+            "still-not-json",
+        ]
+    )
     result = rank_candidates_for_mode(
         context=_context(),
         candidates=_candidates(),
@@ -180,6 +230,26 @@ def test_invalid_json_repair_retry_failure_records_retry_stage() -> None:
     assert result.rerank_parse_failure_stage == "retry"
     assert result.rerank_raw_response == "not-json"
     assert result.rerank_retry_raw_response == "still-not-json"
+    assert len(llm.calls) == 3
+
+
+def test_non_invalid_json_parse_failure_does_not_trigger_final_retry() -> None:
+    llm = _SequenceLlm(['{"foo": [1, 2, 3]}', '{"foo": [1, 2, 3]}'])
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=llm,
+    )
+
+    assert result.rerank_fallback is True
+    assert result.effective_ranking_mode == "deterministic"
+    assert result.rerank_attempted is True
+    assert result.rerank_retry_attempted is True
+    assert result.rerank_fallback_reason == "response_missing_expected_object_key"
+    assert result.rerank_parse_failure_stage == "retry"
+    assert len(llm.calls) == 2
 
 
 def test_markdown_fenced_json_array_is_accepted() -> None:
@@ -216,6 +286,41 @@ def test_generation_failure_triggers_fallback() -> None:
     assert result.rerank_fallback_reason == "generation_failed"
     assert result.rerank_error is not None
     assert result.rerank_error.startswith("RuntimeError:")
+
+
+def test_timeout_once_retries_and_succeeds_without_fallback() -> None:
+    llm = _TimeoutThenSuccessLlm("[3,1,2]")
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=llm,
+    )
+
+    assert _ids(result.ranked) == [30, 10, 20]
+    assert result.rerank_fallback is False
+    assert result.effective_ranking_mode == "llm_rerank"
+    assert result.rerank_attempted is True
+    assert result.rerank_fallback_reason is None
+    assert llm.calls == 2
+
+
+def test_timeout_twice_still_falls_back_generation_failed() -> None:
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=_AlwaysTimeoutLlm(),
+    )
+
+    assert result.rerank_fallback is True
+    assert result.effective_ranking_mode == "deterministic"
+    assert result.rerank_attempted is True
+    assert result.rerank_fallback_reason == "generation_failed"
+    assert result.rerank_error is not None
+    assert "timed out" in result.rerank_error.lower()
 
 
 def test_json_array_with_surrounding_text_is_accepted() -> None:

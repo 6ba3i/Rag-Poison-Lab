@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -78,6 +79,23 @@ Original rerank prompt:
 {original_prompt}
 
 Previous invalid response:
+{invalid_response}
+"""
+
+RERANK_FINAL_REPAIR_PROMPT_TEMPLATE = """Return ONLY {repair_rule} between 1 and {candidate_count}.
+- Raw JSON only
+- No markdown
+- No prose
+- No code fences
+- No extra keys
+
+Output shape example:
+{output_example}
+
+Original rerank prompt:
+{original_prompt}
+
+Latest invalid response:
 {invalid_response}
 """
 
@@ -229,22 +247,54 @@ def rank_candidates_for_mode(
             )
         ).strip()
     except Exception as exc:  # noqa: BLE001
-        rerank_error = _truncate(f"{type(exc).__name__}: {exc}", RERANK_ERROR_MAX_CHARS)
-        logger.warning("LLM rerank fallback: generation failed: %s", exc)
-        return RankingResult(
-            requested_ranking_mode=ranking_mode,
-            effective_ranking_mode="deterministic",
-            ranked=deterministic_top,
-            rerank_candidates=trace_candidates,
-            rerank_prompt=trace_prompt,
-            rerank_fallback=True,
-            rerank_attempted=True,
-            rerank_fallback_reason="generation_failed",
-            rerank_error=rerank_error,
-            rerank_retry_attempted=False,
-            rerank_response_format_mode=rerank_options.response_format_mode,
-            rerank_json_object_key=rerank_options.json_object_key,
-        )
+        if _is_timeout_like_error(exc):
+            logger.warning("LLM rerank generation timed out once; retrying: %s", exc)
+            try:
+                raw_response = str(
+                    llm_client.generate(
+                        prompt=rerank_prompt,
+                        system=None,
+                        json_schema=rerank_schema,
+                        response_format_mode=rerank_options.response_format_mode,
+                        request_extras=rerank_options.request_extras,
+                        temperature=LLM_RERANK_TEMPERATURE,
+                        max_tokens=LLM_RERANK_MAX_TOKENS,
+                    )
+                ).strip()
+            except Exception as retry_exc:  # noqa: BLE001
+                rerank_error = _truncate(f"{type(retry_exc).__name__}: {retry_exc}", RERANK_ERROR_MAX_CHARS)
+                logger.warning("LLM rerank fallback: generation failed: %s", retry_exc)
+                return RankingResult(
+                    requested_ranking_mode=ranking_mode,
+                    effective_ranking_mode="deterministic",
+                    ranked=deterministic_top,
+                    rerank_candidates=trace_candidates,
+                    rerank_prompt=trace_prompt,
+                    rerank_fallback=True,
+                    rerank_attempted=True,
+                    rerank_fallback_reason="generation_failed",
+                    rerank_error=rerank_error,
+                    rerank_retry_attempted=False,
+                    rerank_response_format_mode=rerank_options.response_format_mode,
+                    rerank_json_object_key=rerank_options.json_object_key,
+                )
+        else:
+            rerank_error = _truncate(f"{type(exc).__name__}: {exc}", RERANK_ERROR_MAX_CHARS)
+            logger.warning("LLM rerank fallback: generation failed: %s", exc)
+            return RankingResult(
+                requested_ranking_mode=ranking_mode,
+                effective_ranking_mode="deterministic",
+                ranked=deterministic_top,
+                rerank_candidates=trace_candidates,
+                rerank_prompt=trace_prompt,
+                rerank_fallback=True,
+                rerank_attempted=True,
+                rerank_fallback_reason="generation_failed",
+                rerank_error=rerank_error,
+                rerank_retry_attempted=False,
+                rerank_response_format_mode=rerank_options.response_format_mode,
+                rerank_json_object_key=rerank_options.json_object_key,
+            )
 
     rerank_response_model = _clean_optional_str(getattr(llm_client, "last_response_model", None))
     parsed_order, parse_fallback_reason = _parse_rerank_order(
@@ -301,6 +351,51 @@ def rank_candidates_for_mode(
             candidate_count=len(prompt_pool),
             json_object_key=rerank_options.json_object_key,
         )
+        if parsed_order is None and parse_fallback_reason == "invalid_json_response":
+            final_repair_prompt = _build_rerank_final_repair_prompt(
+                original_prompt=rerank_prompt,
+                invalid_response=retry_raw_response,
+                candidate_count=len(prompt_pool),
+                json_object_key=rerank_options.json_object_key,
+            )
+            try:
+                retry_raw_response = str(
+                    llm_client.generate(
+                        prompt=final_repair_prompt,
+                        system=None,
+                        json_schema=rerank_schema,
+                        response_format_mode=rerank_options.response_format_mode,
+                        request_extras=rerank_options.request_extras,
+                        temperature=LLM_RERANK_TEMPERATURE,
+                        max_tokens=LLM_RERANK_MAX_TOKENS,
+                    )
+                ).strip()
+            except Exception as exc:  # noqa: BLE001
+                rerank_error = _truncate(f"{type(exc).__name__}: {exc}", RERANK_ERROR_MAX_CHARS)
+                logger.warning("LLM rerank fallback: final repair retry generation failed: %s", exc)
+                return RankingResult(
+                    requested_ranking_mode=ranking_mode,
+                    effective_ranking_mode="deterministic",
+                    ranked=deterministic_top,
+                    rerank_candidates=trace_candidates,
+                    rerank_prompt=trace_prompt,
+                    rerank_raw_response=raw_response,
+                    rerank_retry_raw_response=retry_raw_response,
+                    rerank_fallback=True,
+                    rerank_attempted=True,
+                    rerank_fallback_reason="generation_failed",
+                    rerank_response_model=rerank_response_model,
+                    rerank_error=rerank_error,
+                    rerank_retry_attempted=True,
+                    rerank_parse_failure_stage="retry",
+                    rerank_response_format_mode=rerank_options.response_format_mode,
+                    rerank_json_object_key=rerank_options.json_object_key,
+                )
+            parsed_order, parse_fallback_reason = _parse_rerank_order(
+                retry_raw_response,
+                candidate_count=len(prompt_pool),
+                json_object_key=rerank_options.json_object_key,
+            )
         if parsed_order is None:
             return RankingResult(
                 requested_ranking_mode=ranking_mode,
@@ -859,6 +954,24 @@ def _build_rerank_repair_prompt(
     )
 
 
+def _build_rerank_final_repair_prompt(
+    *,
+    original_prompt: str,
+    invalid_response: str,
+    candidate_count: int,
+    json_object_key: str | None = None,
+) -> str:
+    invalid = _truncate(invalid_response.strip(), RERANK_REPAIR_RESPONSE_MAX_CHARS)
+    repair_rule, output_example = _rerank_repair_contract(json_object_key=json_object_key)
+    return RERANK_FINAL_REPAIR_PROMPT_TEMPLATE.format(
+        candidate_count=max(1, int(candidate_count)),
+        original_prompt=original_prompt,
+        invalid_response=invalid if invalid else "(empty response)",
+        repair_rule=repair_rule,
+        output_example=output_example,
+    )
+
+
 def _rerank_output_contract(*, json_object_key: str | None) -> tuple[str, str]:
     if json_object_key is None:
         return (
@@ -938,6 +1051,37 @@ def _clean_optional_str(value: object) -> str | None:
     if cleaned == "":
         return None
     return cleaned
+
+
+def _is_timeout_like_error(exc: Exception) -> bool:
+    for current in _iter_exception_chain(exc):
+        if isinstance(current, TimeoutError):
+            return True
+        class_name = type(current).__name__.lower()
+        if "timeout" in class_name:
+            return True
+        text = str(current).strip().lower()
+        if "timed out" in text or "timeout" in text:
+            return True
+    return False
+
+
+def _iter_exception_chain(exc: Exception) -> Iterable[BaseException]:
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        marker = id(current)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        yield current
+        cause = getattr(current, "__cause__", None)
+        context = getattr(current, "__context__", None)
+        if isinstance(cause, BaseException):
+            stack.append(cause)
+        if isinstance(context, BaseException):
+            stack.append(context)
 
 
 def _movie_popularity_priorities(*, users_service: UsersService) -> dict[int, tuple[int, float]]:

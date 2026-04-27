@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from api.app.llm import anthropic_client, gemini_client, local_ollama, openai_compatible
@@ -165,6 +166,16 @@ def test_chatgpt_provider_forwards_json_object_mode_and_request_extras(monkeypat
     assert "json_schema" not in payload.get("response_format", {})
 
 
+def test_chatgpt_provider_exposes_json_object_rerank_options() -> None:
+    provider = ChatGptProvider(model="gpt-5.4-mini", api_key="test-openai-key", curated_models=["gpt-5.4-mini"])
+
+    options = provider.rerank_generation_options()
+    assert isinstance(options, RerankGenerationOptions)
+    assert options.response_format_mode == "json_object"
+    assert options.json_object_key == "order"
+    assert options.request_extras is None
+
+
 def test_cloud_provider_missing_key_healthcheck() -> None:
     chatgpt = ChatGptProvider(model="gpt-5.4", curated_models=[])
     status = chatgpt.healthcheck()
@@ -194,6 +205,33 @@ def test_claude_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert provider.healthcheck().healthy is True
 
 
+def test_claude_provider_uses_openai_compatible_on_novai(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_compat_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return FakeResponse(200, {"choices": [{"message": {"content": "{\"order\": [1, 2]}"}, "model": "claude"}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_compat_post)
+
+    provider = ClaudeProvider(
+        model="claude-sonnet-4-6",
+        api_key="claude-key",
+        curated_models=["claude-sonnet-4-6"],
+        base_url="https://once.novai.su/v1",
+    )
+    output = provider.generate(prompt="hello", response_format_mode="json_object")
+
+    assert output == "{\"order\": [1, 2]}"
+    assert captured["url"] == "https://once.novai.su/v1/chat/completions"
+    options = provider.rerank_generation_options()
+    assert options.response_format_mode == "json_object"
+    assert options.json_object_key == "order"
+
+
 def test_gemini_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
@@ -220,6 +258,33 @@ def test_gemini_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert provider.healthcheck().healthy is True
 
 
+def test_gemini_provider_uses_openai_compatible_on_novai(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_compat_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return FakeResponse(200, {"choices": [{"message": {"content": "{\"order\": [1, 2]}"}, "model": "gemini"}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_compat_post)
+
+    provider = GeminiProvider(
+        model="gemini-2.5-pro",
+        api_key="gemini-key",
+        curated_models=["gemini-2.5-pro"],
+        base_url="https://once.novai.su/v1",
+    )
+    output = provider.generate(prompt="hello", response_format_mode="json_object")
+
+    assert output == "{\"order\": [1, 2]}"
+    assert captured["url"] == "https://once.novai.su/v1/chat/completions"
+    options = provider.rerank_generation_options()
+    assert options.response_format_mode == "json_object"
+    assert options.json_object_key == "order"
+
+
 def test_qwen_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
@@ -239,6 +304,16 @@ def test_qwen_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(headers, dict)
     assert headers["Authorization"] == "Bearer qwen-key"
     assert provider.healthcheck().healthy is True
+
+
+def test_qwen_provider_exposes_json_object_rerank_options() -> None:
+    provider = QwenProvider(model="qwen-plus", api_key="qwen-key", curated_models=["qwen-plus"])
+
+    options = provider.rerank_generation_options()
+    assert isinstance(options, RerankGenerationOptions)
+    assert options.response_format_mode == "json_object"
+    assert options.json_object_key == "order"
+    assert options.request_extras is None
 
 
 def test_deepseek_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -287,6 +362,102 @@ def test_openai_compatible_extract_text_uses_reasoning_content_when_content_empt
     }
 
     assert openai_compatible._extract_text(body) == "[3,1,2]"
+
+
+def test_openai_compatible_extract_text_uses_choice_text_when_message_missing() -> None:
+    body = {
+        "model": "qwen-3.5-plus",
+        "choices": [
+            {
+                "text": "{\"order\":[1,2]}",
+            }
+        ],
+    }
+
+    assert openai_compatible._extract_text(body) == "{\"order\":[1,2]}"
+
+
+def test_openai_compatible_extract_text_uses_tool_call_arguments_when_content_empty() -> None:
+    body = {
+        "model": "qwen-3.5-plus",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tool_1",
+                            "type": "function",
+                            "function": {
+                                "name": "emit_json",
+                                "arguments": "{\"order\":[1,2]}",
+                            },
+                        }
+                    ],
+                }
+            }
+        ],
+    }
+
+    assert openai_compatible._extract_text(body) == "{\"order\":[1,2]}"
+
+
+def test_openai_compatible_client_retries_transport_timeout_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        del url, headers, json, timeout
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("timed out")
+        return FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    client = openai_compatible.OpenAICompatibleClient(base_url="https://api.example.com/v1", api_key="k", timeout=30.0)
+    output = client.generate(model="m", prompt="hello")
+
+    assert output == "ok"
+    assert calls == 2
+
+
+def test_anthropic_client_retries_transport_timeout_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        del url, headers, json, timeout
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("timed out")
+        return FakeResponse(200, {"content": [{"type": "text", "text": "ok"}]})
+
+    monkeypatch.setattr(anthropic_client.httpx, "post", fake_post)
+    client = anthropic_client.AnthropicClient(base_url="https://api.anthropic.com/v1", api_key="k", timeout=30.0)
+    output = client.generate(model="m", prompt="hello")
+
+    assert output == "ok"
+    assert calls == 2
+
+
+def test_gemini_client_retries_transport_timeout_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def fake_post(url: str, params: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        del url, params, json, timeout
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("timed out")
+        return FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+    monkeypatch.setattr(gemini_client.httpx, "post", fake_post)
+    client = gemini_client.GeminiClient(base_url="https://api.example.com/v1beta", api_key="k", timeout=30.0)
+    output = client.generate(model="m", prompt="hello")
+
+    assert output == "ok"
+    assert calls == 2
 
 
 def test_registry_chatgpt_env_only_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

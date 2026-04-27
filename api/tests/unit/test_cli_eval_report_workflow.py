@@ -731,6 +731,142 @@ def test_eval_runner_strict_rerank_succeeds_when_rerank_is_effective(monkeypatch
     assert trace_payload["attacked_debug"]["rerank_fallback"] is False
 
 
+def test_eval_runner_strict_rerank_tolerates_single_timeout_retry(monkeypatch, tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    _write_bulk_fixtures(settings.resolved_processed_dir)
+    settings.resolved_llm_config_path.write_text(
+        json.dumps(
+            {
+                "victim": {"provider": "chatgpt", "model": "gpt-5.4"},
+                "attacker": {"provider": "chatgpt", "model": "gpt-5.4"},
+                "ranking_mode": "llm_rerank",
+                "retrieval_mode": "hybrid",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _HealthyStatus:
+        available = True
+        healthy = True
+        message = ""
+
+    class _TimeoutThenSuccessClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def healthcheck(self) -> _HealthyStatus:
+            return _HealthyStatus()
+
+        def generate(self, **kwargs: object) -> str:
+            del kwargs
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("Claude request failed: The read operation timed out")
+            return "[1, 2]"
+
+    class _TransientTimeoutRegistry:
+        def __init__(self, *, settings: Settings) -> None:
+            del settings
+            self._client = _TimeoutThenSuccessClient()
+
+        def get_victim_client(self) -> _TimeoutThenSuccessClient:
+            return self._client
+
+    monkeypatch.setattr(eval_runner, "LlmRegistry", _TransientTimeoutRegistry)
+
+    summary = run_experiments(
+        mode="single",
+        label="strict_rerank_timeout_retry_success",
+        user_id=1,
+        batch_size=1,
+        k=10,
+        settings=settings,
+        es_client=FakeElasticsearch(),
+        results_root=tmp_path / "runs",
+        require_rerank_success=True,
+    )
+
+    assert summary["mode"] == "single"
+    trace_payload = json.loads(Path(summary["attack_trace_path"]).read_text(encoding="utf-8"))
+    assert trace_payload["baseline_debug"]["effective_ranking_mode"] == "llm_rerank"
+    assert trace_payload["baseline_debug"]["rerank_fallback"] is False
+    assert trace_payload["attacked_debug"]["effective_ranking_mode"] == "llm_rerank"
+    assert trace_payload["attacked_debug"]["rerank_fallback"] is False
+
+
+def test_eval_runner_strict_rerank_tolerates_retry_stage_invalid_json_recovery(
+    monkeypatch, tmp_path: Path
+) -> None:
+    settings = _build_settings(tmp_path)
+    _write_bulk_fixtures(settings.resolved_processed_dir)
+    settings.resolved_llm_config_path.write_text(
+        json.dumps(
+            {
+                "victim": {"provider": "chatgpt", "model": "gpt-5.4"},
+                "attacker": {"provider": "chatgpt", "model": "gpt-5.4"},
+                "ranking_mode": "llm_rerank",
+                "retrieval_mode": "hybrid",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _HealthyStatus:
+        available = True
+        healthy = True
+        message = ""
+
+    class _RetryStageInvalidJsonThenSuccessClient:
+        def __init__(self) -> None:
+            self.rerank_calls = 0
+
+        def healthcheck(self) -> _HealthyStatus:
+            return _HealthyStatus()
+
+        def generate(self, **kwargs: object) -> str:
+            if kwargs.get("json_schema") is None:
+                return "explanation"
+            self.rerank_calls += 1
+            sequence_index = (self.rerank_calls - 1) % 3
+            if sequence_index == 0:
+                return "not-json"
+            if sequence_index == 1:
+                return "Here is the JSON requested: ```json"
+            return "[1, 2]"
+
+    class _RetryStageInvalidJsonRegistry:
+        def __init__(self, *, settings: Settings) -> None:
+            del settings
+            self._client = _RetryStageInvalidJsonThenSuccessClient()
+
+        def get_victim_client(self) -> _RetryStageInvalidJsonThenSuccessClient:
+            return self._client
+
+    monkeypatch.setattr(eval_runner, "LlmRegistry", _RetryStageInvalidJsonRegistry)
+
+    summary = run_experiments(
+        mode="single",
+        label="strict_rerank_retry_stage_invalid_json_recovery",
+        user_id=1,
+        batch_size=1,
+        k=10,
+        settings=settings,
+        es_client=FakeElasticsearch(),
+        results_root=tmp_path / "runs",
+        require_rerank_success=True,
+    )
+
+    assert summary["mode"] == "single"
+    trace_payload = json.loads(Path(summary["attack_trace_path"]).read_text(encoding="utf-8"))
+    assert trace_payload["baseline_debug"]["effective_ranking_mode"] == "llm_rerank"
+    assert trace_payload["baseline_debug"]["rerank_fallback"] is False
+    assert trace_payload["baseline_debug"]["rerank_retry_attempted"] is True
+    assert trace_payload["attacked_debug"]["effective_ranking_mode"] == "llm_rerank"
+    assert trace_payload["attacked_debug"]["rerank_fallback"] is False
+    assert trace_payload["attacked_debug"]["rerank_retry_attempted"] is True
+
+
 def test_eval_runner_rejects_label_overwrite_by_default(tmp_path: Path) -> None:
     settings = _build_settings(tmp_path)
     runs_root = tmp_path / "runs"

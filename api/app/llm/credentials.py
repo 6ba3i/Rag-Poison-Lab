@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from api.app.settings import Settings
 
 _PROVIDER_API_KEY_ATTR = {
@@ -73,6 +75,20 @@ def resolve_base_url(provider_name: str, settings: Settings) -> tuple[str | None
         return "https://api.deepseek.com", "default:DEEPSEEK_BASE_URL"
 
     return None, "none"
+
+
+def is_novai_compat_base_url(base_url: str | None) -> bool:
+    cleaned = _clean_value(base_url)
+    if cleaned is None:
+        return False
+
+    parsed = urlparse(cleaned)
+    host = parsed.netloc.lower()
+    if "novai" not in host:
+        return False
+
+    path = parsed.path.rstrip("/")
+    return path == "/v1" or path.endswith("/v1")
 
 
 def _clean_value(raw: str | None) -> str | None:

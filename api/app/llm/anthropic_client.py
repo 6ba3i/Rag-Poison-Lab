@@ -5,12 +5,24 @@ from typing import Any
 
 import httpx
 
+from api.app.llm.http_retry import execute_with_retry
+
 
 class AnthropicClient:
-    def __init__(self, *, base_url: str, api_key: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        timeout: float = 30.0,
+        max_retries: int = 1,
+        retry_backoff_seconds: float = 0.0,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.max_retries = max(0, int(max_retries))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
 
     def generate(
         self,
@@ -46,13 +58,16 @@ class AnthropicClient:
         }
 
         try:
-            response = httpx.post(
-                f"{self.base_url}/messages",
-                headers=headers,
-                json=payload,
-                timeout=self.timeout,
+            response = execute_with_retry(
+                send=lambda: httpx.post(
+                    f"{self.base_url}/messages",
+                    headers=headers,
+                    json=payload,
+                    timeout=self.timeout,
+                ),
+                max_retries=self.max_retries,
+                retry_backoff_seconds=self.retry_backoff_seconds,
             )
-            response.raise_for_status()
             body = response.json()
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Claude request failed: {exc}") from exc

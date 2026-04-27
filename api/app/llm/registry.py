@@ -99,6 +99,9 @@ class LlmRegistry:
             api_key=resolved_api_key,
             curated_models=curated_models,
             base_url=resolved_base_url,
+            timeout=float(self.settings.cloud_llm_timeout_seconds),
+            max_retries=int(self.settings.cloud_llm_max_retries),
+            retry_backoff_seconds=float(self.settings.cloud_llm_retry_backoff_seconds),
         )
 
     def get_victim_client(self) -> LlmProvider:

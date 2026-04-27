@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     qwen_api_key: str | None = None
     deepseek_base_url: str | None = None
     deepseek_api_key: str | None = None
+    cloud_llm_timeout_seconds: float = Field(default=30.0, gt=0)
+    cloud_llm_max_retries: int = Field(default=1, ge=0, le=5)
+    cloud_llm_retry_backoff_seconds: float = Field(default=0.0, ge=0)
 
     auto_reindex_on_config_change: bool = True
     auto_reindex_es_url: str = "http://localhost:9200"

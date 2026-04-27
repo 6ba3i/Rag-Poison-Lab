@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from api.app.llm.base import LlmProvider, ProviderStatus, RerankResponseFormatMode
+from api.app.llm.base import (
+    LlmProvider,
+    ProviderStatus,
+    RerankGenerationOptions,
+    RerankResponseFormatMode,
+)
+from api.app.llm.credentials import is_novai_compat_base_url
 from api.app.llm.gemini_client import GeminiClient
+from api.app.llm.openai_compatible import OpenAICompatibleClient
 
 
 class GeminiProvider(LlmProvider):
@@ -17,12 +24,18 @@ class GeminiProvider(LlmProvider):
         curated_models: list[str],
         base_url: str | None = None,
         timeout: float = 30.0,
+        max_retries: int = 1,
+        retry_backoff_seconds: float = 0.0,
     ) -> None:
         super().__init__(model=model)
         self.api_key = api_key.strip() if api_key is not None else None
         self.curated_models = curated_models
         self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").strip() or "https://generativelanguage.googleapis.com/v1beta"
         self.timeout = timeout
+        self.max_retries = max(0, int(max_retries))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
+        self._use_openai_compatible = is_novai_compat_base_url(self.base_url)
+        self.last_response_model: str | None = None
 
     def generate(
         self,
@@ -35,11 +48,39 @@ class GeminiProvider(LlmProvider):
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> str:
-        del response_format_mode, request_extras
         api_key = self._resolve_api_key()
         if api_key is None:
             raise RuntimeError("Gemini provider is unavailable: missing API key environment configuration")
-        client = GeminiClient(base_url=self.base_url, api_key=api_key, timeout=self.timeout)
+        if self._use_openai_compatible:
+            client = OpenAICompatibleClient(
+                base_url=self.base_url,
+                api_key=api_key,
+                timeout=self.timeout,
+                max_retries=self.max_retries,
+                retry_backoff_seconds=self.retry_backoff_seconds,
+            )
+            text = client.generate(
+                model=self.model,
+                prompt=prompt,
+                system=system,
+                json_schema=json_schema,
+                response_format_mode=response_format_mode,
+                request_extras=request_extras,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            self.last_response_model = client.last_response_model
+            return text
+
+        self.last_response_model = None
+        del response_format_mode, request_extras
+        client = GeminiClient(
+            base_url=self.base_url,
+            api_key=api_key,
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+            retry_backoff_seconds=self.retry_backoff_seconds,
+        )
         return client.generate(
             model=self.model,
             prompt=prompt,
@@ -47,6 +88,14 @@ class GeminiProvider(LlmProvider):
             json_schema=json_schema,
             temperature=temperature,
             max_tokens=max_tokens,
+        )
+
+    def rerank_generation_options(self) -> RerankGenerationOptions:
+        if not self._use_openai_compatible:
+            return RerankGenerationOptions()
+        return RerankGenerationOptions(
+            response_format_mode="json_object",
+            json_object_key="order",
         )
 
     def healthcheck(self) -> ProviderStatus:
