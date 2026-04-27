@@ -99,6 +99,11 @@ class TraceResponse(BaseModel):
     rerank_parsed_order: list[int] | None = None
     rerank_fallback: bool | None = None
     rerank_fallback_reason: str | None = None
+    rerank_retry_attempted: bool | None = None
+    rerank_retry_raw_response: str | None = None
+    rerank_parse_failure_stage: str | None = None
+    rerank_response_format_mode: str | None = None
+    rerank_json_object_key: str | None = None
     rerank_response_model: str | None = None
     rerank_error: str | None = None
     rerank_provider: ProviderName | None = None

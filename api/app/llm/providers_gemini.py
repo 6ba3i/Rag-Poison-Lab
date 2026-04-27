@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from api.app.llm.base import LlmProvider, ProviderStatus
+from api.app.llm.base import LlmProvider, ProviderStatus, RerankResponseFormatMode
 from api.app.llm.gemini_client import GeminiClient
 
 
@@ -30,9 +30,12 @@ class GeminiProvider(LlmProvider):
         prompt: str,
         system: str | None = None,
         json_schema: dict[str, Any] | None = None,
+        response_format_mode: RerankResponseFormatMode | None = None,
+        request_extras: dict[str, Any] | None = None,
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> str:
+        del response_format_mode, request_extras
         api_key = self._resolve_api_key()
         if api_key is None:
             raise RuntimeError("Gemini provider is unavailable: missing API key environment configuration")

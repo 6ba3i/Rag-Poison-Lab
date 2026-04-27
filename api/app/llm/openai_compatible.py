@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from api.app.llm.base import RerankResponseFormatMode
+
 
 class OpenAICompatibleClient:
     def __init__(self, *, base_url: str, api_key: str, timeout: float = 30.0) -> None:
@@ -19,6 +21,8 @@ class OpenAICompatibleClient:
         prompt: str,
         system: str | None = None,
         json_schema: dict[str, Any] | None = None,
+        response_format_mode: RerankResponseFormatMode | None = None,
+        request_extras: dict[str, Any] | None = None,
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> str:
@@ -33,11 +37,24 @@ class OpenAICompatibleClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if json_schema is not None:
+        resolved_mode = response_format_mode
+        if resolved_mode is None and json_schema is not None:
+            resolved_mode = "json_schema"
+
+        if resolved_mode == "json_schema":
+            if json_schema is None:
+                raise RuntimeError("OpenAI-compatible json_schema mode requires json_schema")
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"name": "response", "schema": json_schema},
             }
+        elif resolved_mode == "json_object":
+            payload["response_format"] = {"type": "json_object"}
+        elif resolved_mode is not None:
+            raise RuntimeError(f"OpenAI-compatible request does not support response_format_mode={resolved_mode!r}")
+
+        if request_extras:
+            payload.update(request_extras)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",

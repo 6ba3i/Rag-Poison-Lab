@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from api.app.llm.base import LlmProvider, ProviderStatus
+from api.app.llm.base import LlmProvider, ProviderStatus, RerankResponseFormatMode
 
 
 def _tags_url(base_url: str) -> str:
@@ -58,9 +58,12 @@ class LocalOllamaProvider(LlmProvider):
         prompt: str,
         system: str | None = None,
         json_schema: dict[str, Any] | None = None,
+        response_format_mode: RerankResponseFormatMode | None = None,
+        request_extras: dict[str, Any] | None = None,
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> str:
+        del response_format_mode, request_extras
         options: dict[str, Any] = {"temperature": temperature, "num_predict": max_tokens}
         payload: dict[str, Any] = {
             "model": self.model,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -12,6 +12,16 @@ class ProviderStatus:
     available: bool
     healthy: bool
     message: str = ""
+
+
+RerankResponseFormatMode = Literal["json_schema", "json_object"]
+
+
+@dataclass(frozen=True)
+class RerankGenerationOptions:
+    response_format_mode: RerankResponseFormatMode = "json_schema"
+    json_object_key: str | None = None
+    request_extras: dict[str, Any] | None = None
 
 
 class LlmProvider(ABC):
@@ -27,10 +37,15 @@ class LlmProvider(ABC):
         prompt: str,
         system: str | None = None,
         json_schema: dict[str, Any] | None = None,
+        response_format_mode: RerankResponseFormatMode | None = None,
+        request_extras: dict[str, Any] | None = None,
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> str:
         raise NotImplementedError
+
+    def rerank_generation_options(self) -> RerankGenerationOptions:
+        return RerankGenerationOptions()
 
     @abstractmethod
     def healthcheck(self) -> ProviderStatus:

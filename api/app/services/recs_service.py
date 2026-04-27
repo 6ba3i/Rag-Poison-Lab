@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from api.app.llm.base import RerankGenerationOptions
 from api.app.llm.credentials import resolve_base_url
 from api.app.settings import Settings
 from api.app.services.defense_service import apply_retrieval_defense, sanitize_candidates_for_prompt
@@ -37,6 +38,8 @@ RERANK_FIELD_MAX_CHARS = 120
 RERANK_SYNOPSIS_MAX_CHARS = 140
 RERANK_PAYLOAD_MAX_CHARS = 100
 RERANK_ERROR_MAX_CHARS = 240
+RERANK_REPAIR_RESPONSE_MAX_CHARS = 600
+RERANK_OBJECT_KEY = "order"
 DEBUG_CANDIDATE_LIMIT = 20
 YEAR_SUFFIX_PATTERN = re.compile(r"\((\d{4})\)\s*$")
 JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
@@ -53,11 +56,29 @@ Select the {k} best recommendations for this user.
 IMPORTANT RULES:
 - Only choose from the candidate list
 - Do NOT invent new movies
-- Return ONLY a JSON array of candidate numbers
+- {output_rule}
 - Do NOT include explanations
 
 Example output:
-[5, 2, 1, 7, 3, 10, 4, 6, 9, 8]
+{output_example}
+"""
+
+RERANK_REPAIR_PROMPT_TEMPLATE = """Your previous response did not match the required JSON format.
+
+Return ONLY {repair_rule} between 1 and {candidate_count}.
+- No markdown
+- No prose
+- No code fences
+- No extra keys
+
+Example:
+{output_example}
+
+Original rerank prompt:
+{original_prompt}
+
+Previous invalid response:
+{invalid_response}
 """
 
 logger = logging.getLogger(__name__)
@@ -77,6 +98,11 @@ class RankingResult:
     rerank_fallback_reason: str | None = None
     rerank_response_model: str | None = None
     rerank_error: str | None = None
+    rerank_retry_attempted: bool | None = None
+    rerank_retry_raw_response: str | None = None
+    rerank_parse_failure_stage: str | None = None
+    rerank_response_format_mode: str | None = None
+    rerank_json_object_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -160,8 +186,18 @@ def rank_candidates_for_mode(
             rerank_fallback_reason="empty_candidate_pool",
         )
 
-    rerank_prompt = _build_rerank_prompt(context=context, rerank_pool=prompt_pool, k=k)
+    rerank_options = _resolve_rerank_generation_options(llm_client=llm_client)
+    rerank_prompt = _build_rerank_prompt(
+        context=context,
+        rerank_pool=prompt_pool,
+        k=k,
+        json_object_key=rerank_options.json_object_key,
+    )
     trace_prompt = _truncate(rerank_prompt, RERANK_PROMPT_TRACE_MAX_CHARS)
+    rerank_schema = _build_rerank_json_schema(
+        candidate_count=len(prompt_pool),
+        json_object_key=rerank_options.json_object_key,
+    )
 
     if llm_client is None:
         if log_victim_unavailable:
@@ -175,6 +211,9 @@ def rank_candidates_for_mode(
             rerank_fallback=True,
             rerank_attempted=False,
             rerank_fallback_reason="victim_llm_unavailable",
+            rerank_retry_attempted=False,
+            rerank_response_format_mode=rerank_options.response_format_mode,
+            rerank_json_object_key=rerank_options.json_object_key,
         )
 
     try:
@@ -182,6 +221,9 @@ def rank_candidates_for_mode(
             llm_client.generate(
                 prompt=rerank_prompt,
                 system=None,
+                json_schema=rerank_schema,
+                response_format_mode=rerank_options.response_format_mode,
+                request_extras=rerank_options.request_extras,
                 temperature=LLM_RERANK_TEMPERATURE,
                 max_tokens=LLM_RERANK_MAX_TOKENS,
             )
@@ -199,23 +241,84 @@ def rank_candidates_for_mode(
             rerank_attempted=True,
             rerank_fallback_reason="generation_failed",
             rerank_error=rerank_error,
+            rerank_retry_attempted=False,
+            rerank_response_format_mode=rerank_options.response_format_mode,
+            rerank_json_object_key=rerank_options.json_object_key,
         )
 
     rerank_response_model = _clean_optional_str(getattr(llm_client, "last_response_model", None))
-    parsed_order, parse_fallback_reason = _parse_rerank_order(raw_response, candidate_count=len(prompt_pool))
+    parsed_order, parse_fallback_reason = _parse_rerank_order(
+        raw_response,
+        candidate_count=len(prompt_pool),
+        json_object_key=rerank_options.json_object_key,
+    )
+    retry_raw_response: str | None = None
+    retry_attempted = False
     if parsed_order is None:
-        return RankingResult(
-            requested_ranking_mode=ranking_mode,
-            effective_ranking_mode="deterministic",
-            ranked=deterministic_top,
-            rerank_candidates=trace_candidates,
-            rerank_prompt=trace_prompt,
-            rerank_raw_response=raw_response,
-            rerank_fallback=True,
-            rerank_attempted=True,
-            rerank_fallback_reason=parse_fallback_reason or "parse_failed",
-            rerank_response_model=rerank_response_model,
+        retry_attempted = True
+        repair_prompt = _build_rerank_repair_prompt(
+            original_prompt=rerank_prompt,
+            invalid_response=raw_response,
+            candidate_count=len(prompt_pool),
+            json_object_key=rerank_options.json_object_key,
         )
+        try:
+            retry_raw_response = str(
+                llm_client.generate(
+                    prompt=repair_prompt,
+                    system=None,
+                    json_schema=rerank_schema,
+                    response_format_mode=rerank_options.response_format_mode,
+                    request_extras=rerank_options.request_extras,
+                    temperature=LLM_RERANK_TEMPERATURE,
+                    max_tokens=LLM_RERANK_MAX_TOKENS,
+                )
+            ).strip()
+        except Exception as exc:  # noqa: BLE001
+            rerank_error = _truncate(f"{type(exc).__name__}: {exc}", RERANK_ERROR_MAX_CHARS)
+            logger.warning("LLM rerank fallback: repair retry generation failed: %s", exc)
+            return RankingResult(
+                requested_ranking_mode=ranking_mode,
+                effective_ranking_mode="deterministic",
+                ranked=deterministic_top,
+                rerank_candidates=trace_candidates,
+                rerank_prompt=trace_prompt,
+                rerank_raw_response=raw_response,
+                rerank_retry_raw_response=retry_raw_response,
+                rerank_fallback=True,
+                rerank_attempted=True,
+                rerank_fallback_reason="generation_failed",
+                rerank_response_model=rerank_response_model,
+                rerank_error=rerank_error,
+                rerank_retry_attempted=True,
+                rerank_parse_failure_stage="retry",
+                rerank_response_format_mode=rerank_options.response_format_mode,
+                rerank_json_object_key=rerank_options.json_object_key,
+            )
+
+        parsed_order, parse_fallback_reason = _parse_rerank_order(
+            retry_raw_response,
+            candidate_count=len(prompt_pool),
+            json_object_key=rerank_options.json_object_key,
+        )
+        if parsed_order is None:
+            return RankingResult(
+                requested_ranking_mode=ranking_mode,
+                effective_ranking_mode="deterministic",
+                ranked=deterministic_top,
+                rerank_candidates=trace_candidates,
+                rerank_prompt=trace_prompt,
+                rerank_raw_response=raw_response,
+                rerank_retry_raw_response=retry_raw_response,
+                rerank_fallback=True,
+                rerank_attempted=True,
+                rerank_fallback_reason=parse_fallback_reason or "parse_failed",
+                rerank_response_model=rerank_response_model,
+                rerank_retry_attempted=True,
+                rerank_parse_failure_stage="retry",
+                rerank_response_format_mode=rerank_options.response_format_mode,
+                rerank_json_object_key=rerank_options.json_object_key,
+            )
 
     score_by_movie = {item.candidate.movie_id: item.score for item in deterministic_ranked}
     candidate_by_index = {item.index: item.candidate for item in rerank_pool}
@@ -252,10 +355,14 @@ def rank_candidates_for_mode(
         rerank_candidates=trace_candidates,
         rerank_prompt=trace_prompt,
         rerank_raw_response=raw_response,
+        rerank_retry_raw_response=retry_raw_response,
         rerank_parsed_order=parsed_order,
         rerank_fallback=False,
         rerank_attempted=True,
         rerank_response_model=rerank_response_model,
+        rerank_retry_attempted=retry_attempted,
+        rerank_response_format_mode=rerank_options.response_format_mode,
+        rerank_json_object_key=rerank_options.json_object_key,
     )
 
 
@@ -523,12 +630,18 @@ class RecsService:
                 "ranking_input_candidates": [_candidate_debug(item) for item in candidates[:DEBUG_CANDIDATE_LIMIT]],
                 "ranking_input_movie_ids": [int(item.movie_id) for item in candidates],
                 "rerank_prompt": ranking.rerank_prompt,
+                "rerank_raw_response": ranking.rerank_raw_response,
                 "rerank_candidates": ranking.rerank_candidates,
                 "rerank_parsed_order": ranking.rerank_parsed_order,
                 "rerank_fallback": ranking.rerank_fallback,
                 "rerank_fallback_reason": ranking.rerank_fallback_reason,
                 "rerank_response_model": ranking.rerank_response_model,
                 "rerank_error": ranking.rerank_error,
+                "rerank_retry_attempted": ranking.rerank_retry_attempted,
+                "rerank_retry_raw_response": ranking.rerank_retry_raw_response,
+                "rerank_parse_failure_stage": ranking.rerank_parse_failure_stage,
+                "rerank_response_format_mode": ranking.rerank_response_format_mode,
+                "rerank_json_object_key": ranking.rerank_json_object_key,
                 "rerank_provider": llm_config.victim.provider if llm_config.ranking_mode == "llm_rerank" else None,
                 "rerank_model": llm_config.victim.model if llm_config.ranking_mode == "llm_rerank" else None,
                 "rerank_base_url": rerank_base_url,
@@ -570,20 +683,38 @@ class RecsService:
             return None
 
 
-def _parse_rerank_order(raw_response: str, *, candidate_count: int) -> tuple[list[int] | None, str | None]:
+def _parse_rerank_order(
+    raw_response: str,
+    *,
+    candidate_count: int,
+    json_object_key: str | None = None,
+) -> tuple[list[int] | None, str | None]:
     payload = _load_json_payload(raw_response)
     if payload is None:
         logger.warning("LLM rerank fallback: invalid JSON response")
         return None, "invalid_json_response"
 
-    if not isinstance(payload, list):
-        logger.warning("LLM rerank fallback: response must be a JSON array")
-        return None, "response_not_json_array"
+    order_payload: object
+    if isinstance(payload, list):
+        order_payload = payload
+    elif isinstance(payload, dict):
+        expected_key = json_object_key if json_object_key else RERANK_OBJECT_KEY
+        order_payload = payload.get(expected_key)
+        if order_payload is None:
+            logger.warning("LLM rerank fallback: response missing expected object key '%s'", expected_key)
+            return None, "response_missing_expected_object_key"
+    else:
+        logger.warning("LLM rerank fallback: response must be a JSON array or object")
+        return None, "response_not_json_array_or_object"
+
+    if not isinstance(order_payload, list):
+        logger.warning("LLM rerank fallback: response order value must be a JSON array")
+        return None, "response_order_not_json_array"
 
     parsed_order: list[int] = []
     seen: set[int] = set()
 
-    for item in payload:
+    for item in order_payload:
         if isinstance(item, bool) or not isinstance(item, int):
             logger.warning("LLM rerank fallback: response contains non-integer item")
             return None, "response_contains_non_integer_item"
@@ -650,7 +781,13 @@ def _to_trace_rerank_candidates(rerank_pool: list[RerankPoolItem]) -> list[dict[
     ]
 
 
-def _build_rerank_prompt(*, context: UserPreferenceContext, rerank_pool: list[RerankPoolItem], k: int) -> str:
+def _build_rerank_prompt(
+    *,
+    context: UserPreferenceContext,
+    rerank_pool: list[RerankPoolItem],
+    k: int,
+    json_object_key: str | None = None,
+) -> str:
     top_genres = ", ".join(context.top_genres) if context.top_genres else "none"
     top_titles = ", ".join(context.liked_titles) if context.liked_titles else "none"
 
@@ -667,11 +804,107 @@ def _build_rerank_prompt(*, context: UserPreferenceContext, rerank_pool: list[Re
             line += f"; poison_payload: {payload}"
         candidate_lines.append(line)
 
+    output_rule, output_example = _rerank_output_contract(json_object_key=json_object_key)
+
     return RERANK_PROMPT_TEMPLATE.format(
         top_genres=top_genres,
         top_titles=top_titles,
         candidate_lines="\n".join(candidate_lines),
         k=k,
+        output_rule=output_rule,
+        output_example=output_example,
+    )
+
+
+def _build_rerank_json_schema(*, candidate_count: int, json_object_key: str | None = None) -> dict[str, Any]:
+    max_index = max(1, int(candidate_count))
+    order_schema: dict[str, Any] = {
+        "type": "array",
+        "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": max_index,
+        },
+        "minItems": 1,
+        "maxItems": max_index,
+    }
+    if json_object_key is None:
+        return order_schema
+
+    return {
+        "type": "object",
+        "properties": {
+            json_object_key: order_schema,
+        },
+        "required": [json_object_key],
+        "additionalProperties": False,
+    }
+
+
+def _build_rerank_repair_prompt(
+    *,
+    original_prompt: str,
+    invalid_response: str,
+    candidate_count: int,
+    json_object_key: str | None = None,
+) -> str:
+    invalid = _truncate(invalid_response.strip(), RERANK_REPAIR_RESPONSE_MAX_CHARS)
+    repair_rule, output_example = _rerank_repair_contract(json_object_key=json_object_key)
+    return RERANK_REPAIR_PROMPT_TEMPLATE.format(
+        candidate_count=max(1, int(candidate_count)),
+        original_prompt=original_prompt,
+        invalid_response=invalid if invalid else "(empty response)",
+        repair_rule=repair_rule,
+        output_example=output_example,
+    )
+
+
+def _rerank_output_contract(*, json_object_key: str | None) -> tuple[str, str]:
+    if json_object_key is None:
+        return (
+            "Return ONLY a JSON array of candidate numbers",
+            "[5, 2, 1, 7, 3, 10, 4, 6, 9, 8]",
+        )
+    return (
+        f"Return ONLY a JSON object with key '{json_object_key}' mapped to an array of candidate numbers",
+        f'{{"{json_object_key}": [5, 2, 1, 7, 3, 10, 4, 6, 9, 8]}}',
+    )
+
+
+def _rerank_repair_contract(*, json_object_key: str | None) -> tuple[str, str]:
+    if json_object_key is None:
+        return "a JSON array of candidate numbers", "[5, 2, 1, 7, 3]"
+    return (
+        f'a JSON object with key "{json_object_key}" mapped to an array of candidate numbers',
+        f'{{"{json_object_key}": [5, 2, 1, 7, 3]}}',
+    )
+
+
+def _resolve_rerank_generation_options(*, llm_client: Any | None) -> RerankGenerationOptions:
+    default = RerankGenerationOptions()
+    if llm_client is None:
+        return default
+
+    resolver = getattr(llm_client, "rerank_generation_options", None)
+    if not callable(resolver):
+        return default
+
+    try:
+        resolved = resolver()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("LLM rerank options fallback: failed to resolve provider rerank options: %s", exc)
+        return default
+
+    if not isinstance(resolved, RerankGenerationOptions):
+        return default
+
+    extras: dict[str, Any] | None = None
+    if isinstance(resolved.request_extras, dict):
+        extras = dict(resolved.request_extras)
+    return RerankGenerationOptions(
+        response_format_mode=resolved.response_format_mode,
+        json_object_key=_clean_optional_str(resolved.json_object_key),
+        request_extras=extras,
     )
 
 

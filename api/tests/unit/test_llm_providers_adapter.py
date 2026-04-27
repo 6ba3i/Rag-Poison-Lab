@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from api.app.llm import anthropic_client, gemini_client, local_ollama, openai_compatible
+from api.app.llm.base import RerankGenerationOptions
 from api.app.llm.local_ollama import LocalOllamaProvider
 from api.app.llm.providers_chatgpt import ChatGptProvider
 from api.app.llm.providers_claude import ClaudeProvider
@@ -132,6 +133,38 @@ def test_chatgpt_provider_generate_with_api_key(monkeypatch: pytest.MonkeyPatch)
     assert provider.list_models() == ["gpt-5.4", "gpt-5.4-mini"]
     assert provider.healthcheck().available is True
 
+
+def test_chatgpt_provider_forwards_json_object_mode_and_request_extras(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return FakeResponse(200, {"choices": [{"message": {"content": "chatgpt output"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+
+    provider = ChatGptProvider(
+        model="gpt-5.4-mini",
+        api_key="test-openai-key",
+        curated_models=["gpt-5.4-mini"],
+    )
+    _ = provider.generate(
+        prompt="hello",
+        system="be brief",
+        response_format_mode="json_object",
+        request_extras={"thinking": {"type": "disabled"}},
+    )
+
+    payload = captured["json"]
+    assert isinstance(payload, dict)
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "json_schema" not in payload.get("response_format", {})
+
+
 def test_cloud_provider_missing_key_healthcheck() -> None:
     chatgpt = ChatGptProvider(model="gpt-5.4", curated_models=[])
     status = chatgpt.healthcheck()
@@ -227,6 +260,16 @@ def test_deepseek_provider_generate(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(headers, dict)
     assert headers["Authorization"] == "Bearer deepseek-key"
     assert provider.healthcheck().healthy is True
+
+
+def test_deepseek_provider_exposes_json_object_rerank_options() -> None:
+    provider = DeepSeekProvider(model="deepseek-v4-pro", api_key="deepseek-key", curated_models=["deepseek-v4-pro"])
+
+    options = provider.rerank_generation_options()
+    assert isinstance(options, RerankGenerationOptions)
+    assert options.response_format_mode == "json_object"
+    assert options.json_object_key == "order"
+    assert options.request_extras == {"thinking": {"type": "disabled"}}
 
 
 def test_openai_compatible_extract_text_uses_reasoning_content_when_content_empty() -> None:

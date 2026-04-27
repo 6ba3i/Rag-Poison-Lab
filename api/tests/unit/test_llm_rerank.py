@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+from api.app.llm.base import RerankGenerationOptions
 from api.app.main import app
 from api.app.services.recs_service import rank_candidates_for_mode
 from api.app.settings import Settings, get_es_client, get_llm_registry, get_settings
@@ -26,6 +27,35 @@ class _StaticLlm:
 class _FailingLlm:
     def generate(self, **_: object) -> str:
         raise RuntimeError("generation exploded")
+
+
+class _SequenceLlm:
+    def __init__(self, responses: list[str]) -> None:
+        self._responses = list(responses)
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, **kwargs: object) -> str:
+        self.calls.append(dict(kwargs))
+        if not self._responses:
+            return ""
+        return self._responses.pop(0)
+
+
+class _DeepSeekRerankLlm:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.calls: list[dict[str, object]] = []
+
+    def rerank_generation_options(self) -> RerankGenerationOptions:
+        return RerankGenerationOptions(
+            response_format_mode="json_object",
+            json_object_key="order",
+            request_extras={"thinking": {"type": "disabled"}},
+        )
+
+    def generate(self, **kwargs: object) -> str:
+        self.calls.append(dict(kwargs))
+        return self.response
 
 
 def _context() -> Any:
@@ -106,6 +136,50 @@ def test_invalid_json_triggers_fallback() -> None:
     assert result.effective_ranking_mode == "deterministic"
     assert result.rerank_attempted is True
     assert result.rerank_fallback_reason == "invalid_json_response"
+    assert result.rerank_retry_attempted is True
+    assert result.rerank_parse_failure_stage == "retry"
+
+
+def test_invalid_json_repair_retry_can_succeed() -> None:
+    llm = _SequenceLlm(["not-json", "[3,1,2]"])
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=llm,
+    )
+
+    assert _ids(result.ranked) == [30, 10, 20]
+    assert result.rerank_fallback is False
+    assert result.rerank_attempted is True
+    assert result.rerank_retry_attempted is True
+    assert result.rerank_raw_response == "not-json"
+    assert result.rerank_retry_raw_response == "[3,1,2]"
+    assert len(llm.calls) == 2
+    assert llm.calls[0].get("json_schema") is not None
+    assert llm.calls[1].get("json_schema") is not None
+    assert "previous response did not match the required json format" in str(llm.calls[1].get("prompt", "")).lower()
+
+
+def test_invalid_json_repair_retry_failure_records_retry_stage() -> None:
+    llm = _SequenceLlm(["not-json", "still-not-json"])
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=llm,
+    )
+
+    assert result.rerank_fallback is True
+    assert result.effective_ranking_mode == "deterministic"
+    assert result.rerank_attempted is True
+    assert result.rerank_retry_attempted is True
+    assert result.rerank_fallback_reason == "invalid_json_response"
+    assert result.rerank_parse_failure_stage == "retry"
+    assert result.rerank_raw_response == "not-json"
+    assert result.rerank_retry_raw_response == "still-not-json"
 
 
 def test_markdown_fenced_json_array_is_accepted() -> None:
@@ -177,23 +251,39 @@ def test_out_of_range_indices_trigger_fallback() -> None:
     assert result.rerank_fallback_reason == "response_contains_out_of_range_index"
 
 
-def test_non_array_json_triggers_fallback_reason() -> None:
-    context = _context()
-    candidates = _candidates()
-    expected = rank_candidates(candidates=candidates, user_top_genres=context.top_genres, k=3)
-
+def test_json_object_order_is_accepted() -> None:
     result = rank_candidates_for_mode(
-        context=context,
-        candidates=candidates,
+        context=_context(),
+        candidates=_candidates(),
         ranking_mode="llm_rerank",
         k=3,
         llm_client=_StaticLlm('{"order": [1, 2, 3]}'),
     )
 
-    assert _ids(result.ranked) == _ids(expected)
-    assert result.rerank_fallback is True
+    assert _ids(result.ranked) == [10, 20, 30]
+    assert result.rerank_fallback is False
     assert result.rerank_attempted is True
-    assert result.rerank_fallback_reason == "response_not_json_array"
+    assert result.rerank_parsed_order == [1, 2, 3]
+
+
+def test_deepseek_rerank_options_forwarded_and_json_object_output_applies() -> None:
+    llm = _DeepSeekRerankLlm('{"order": [3, 1, 2]}')
+
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=llm,
+    )
+
+    assert _ids(result.ranked) == [30, 10, 20]
+    assert result.rerank_fallback is False
+    assert result.rerank_response_format_mode == "json_object"
+    assert result.rerank_json_object_key == "order"
+    assert llm.calls
+    assert llm.calls[0].get("response_format_mode") == "json_object"
+    assert llm.calls[0].get("request_extras") == {"thinking": {"type": "disabled"}}
 
 
 def test_non_integer_indices_trigger_fallback_reason() -> None:

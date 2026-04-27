@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from api.app.llm.base import LlmProvider, ProviderStatus
+from api.app.llm.base import LlmProvider, ProviderStatus, RerankResponseFormatMode
 from api.app.llm.openai_compatible import OpenAICompatibleClient
 
 
@@ -31,6 +31,8 @@ class QwenProvider(LlmProvider):
         prompt: str,
         system: str | None = None,
         json_schema: dict[str, Any] | None = None,
+        response_format_mode: RerankResponseFormatMode | None = None,
+        request_extras: dict[str, Any] | None = None,
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> str:
@@ -43,6 +45,8 @@ class QwenProvider(LlmProvider):
             prompt=prompt,
             system=system,
             json_schema=json_schema,
+            response_format_mode=response_format_mode,
+            request_extras=request_extras,
             temperature=temperature,
             max_tokens=max_tokens,
         )

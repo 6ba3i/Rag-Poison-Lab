@@ -21,6 +21,7 @@ from api.app.eval.metrics import (
     ndcg_at_k,
     paired_significance,
 )
+from api.app.llm.base import RerankGenerationOptions
 from api.app.llm.registry import LlmRegistry
 from api.app.services.recs_service import (
     RecsService,
@@ -784,7 +785,14 @@ def _ensure_rerank_debug_success(
         attempted = debug_payload.get("rerank_attempted")
         fallback = debug_payload.get("rerank_fallback")
         fallback_reason = debug_payload.get("rerank_fallback_reason")
+        parse_failure_stage = debug_payload.get("rerank_parse_failure_stage")
         effective = debug_payload.get("effective_ranking_mode")
+        error_snippet = _rerank_failure_error_snippet(debug_payload.get("rerank_error"))
+        raw_snippet = _rerank_failure_raw_snippet(
+            raw_response=debug_payload.get("rerank_raw_response"),
+            retry_raw_response=debug_payload.get("rerank_retry_raw_response"),
+            parse_failure_stage=parse_failure_stage,
+        )
 
         if requested != "llm_rerank":
             failures.append(f"{phase}:requested_ranking_mode={requested!r}")
@@ -795,13 +803,56 @@ def _ensure_rerank_debug_success(
         if effective != "llm_rerank":
             failures.append(f"{phase}:effective_ranking_mode={effective!r}")
         if fallback is not False:
-            failures.append(f"{phase}:rerank_fallback={fallback!r} reason={fallback_reason!r}")
+            failure = (
+                f"{phase}:rerank_fallback={fallback!r} reason={fallback_reason!r} "
+                f"stage={parse_failure_stage!r}"
+            )
+            if raw_snippet is not None:
+                failure += f" raw_snippet={raw_snippet!r}"
+            if error_snippet is not None:
+                failure += f" error={error_snippet!r}"
+            failures.append(failure)
 
     if failures:
         raise RuntimeError(
             "Rerank strict mode violation: "
             f"user_id={user_id}; " + "; ".join(failures)
         )
+
+
+def _rerank_failure_raw_snippet(
+    *,
+    raw_response: object,
+    retry_raw_response: object,
+    parse_failure_stage: object,
+) -> str | None:
+    source: str | None = None
+    if parse_failure_stage == "retry" and isinstance(retry_raw_response, str):
+        source = retry_raw_response
+    elif isinstance(raw_response, str):
+        source = raw_response
+    elif isinstance(retry_raw_response, str):
+        source = retry_raw_response
+
+    if source is None:
+        return None
+    compact = " ".join(source.split())
+    if compact == "":
+        return None
+    if len(compact) <= 160:
+        return compact
+    return compact[:160].rstrip() + "..."
+
+
+def _rerank_failure_error_snippet(raw_error: object) -> str | None:
+    if not isinstance(raw_error, str):
+        return None
+    compact = " ".join(raw_error.split())
+    if compact == "":
+        return None
+    if len(compact) <= 160:
+        return compact
+    return compact[:160].rstrip() + "..."
 
 
 def resolve_run_dir(*, settings: Settings, label: str, results_root: Path | None = None) -> Path:
@@ -1850,3 +1901,37 @@ def _validate_eval_victim_llm_config(
     if not status.available or not status.healthy:
         reason = status.message.strip() or "Provider healthcheck failed."
         raise RuntimeError(f"Victim LLM preflight failed: provider={provider}, model={model}. {reason}")
+
+    rerank_options = _resolve_rerank_generation_options_for_preflight(client=client)
+    if rerank_options.response_format_mode not in {"json_schema", "json_object"}:
+        raise RuntimeError(
+            "Victim LLM preflight failed: "
+            f"provider={provider}, model={model}. Unsupported rerank response_format_mode="
+            f"{rerank_options.response_format_mode!r}"
+        )
+    if rerank_options.response_format_mode == "json_object" and not rerank_options.json_object_key:
+        raise RuntimeError(
+            "Victim LLM preflight failed: "
+            f"provider={provider}, model={model}. json_object rerank mode requires json_object_key."
+        )
+
+
+def _resolve_rerank_generation_options_for_preflight(*, client: Any) -> RerankGenerationOptions:
+    resolver = getattr(client, "rerank_generation_options", None)
+    if not callable(resolver):
+        return RerankGenerationOptions()
+    try:
+        resolved = resolver()
+    except Exception:  # noqa: BLE001
+        return RerankGenerationOptions()
+    if not isinstance(resolved, RerankGenerationOptions):
+        return RerankGenerationOptions()
+    extras = dict(resolved.request_extras) if isinstance(resolved.request_extras, dict) else None
+    json_object_key = resolved.json_object_key.strip() if isinstance(resolved.json_object_key, str) else None
+    if json_object_key == "":
+        json_object_key = None
+    return RerankGenerationOptions(
+        response_format_mode=resolved.response_format_mode,
+        json_object_key=json_object_key,
+        request_extras=extras,
+    )
