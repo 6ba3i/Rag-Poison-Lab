@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.attacks.poison_index import apply_poisoning
 from api.app.data.paths import ES_BULK_MOVIES_JSONL, ES_BULK_POISONED_MOVIES_JSONL
 from api.app.eval.runner import resolve_run_dir
 from api.app.services.recs_service import RecsService, load_llm_config, recommendation_retrieval_size
 from api.app.services.users_service import UsersService
 from api.app.settings import Settings, get_es_client, get_settings
 from common.schemas.attack_config import AttackConfig, load_attack_config
+from common.utils.genres import normalize_genres
 from rag.recsys.candidate_gen import build_es_query, build_retrieval_query, build_user_context, parse_hits
 
 logger = logging.getLogger(__name__)
@@ -63,10 +63,6 @@ def generate_audit_artifacts(
         target_movie_id=attack_config.target_movie_id,
     )
 
-    attack_analysis = _attack_by_attack_analysis(
-        baseline_docs=baseline_bulk_docs,
-        attack_config=attack_config,
-    )
     index_diff = _index_diff_summary(
         es_client=resolved_es,
         attack_config=attack_config,
@@ -229,7 +225,7 @@ def _bulk_diff_summary(
     for movie_id, poisoned in poisoned_by_id.items():
         baseline = baseline_by_id.get(movie_id, {})
         title_changed = str(baseline.get("title", "") or "").strip() != str(poisoned.get("title", "") or "").strip()
-        genres_changed = _normalize_genres(baseline.get("genres", [])) != _normalize_genres(poisoned.get("genres", []))
+        genres_changed = normalize_genres(baseline.get("genres", [])) != normalize_genres(poisoned.get("genres", []))
         synopsis_changed = str(baseline.get("synopsis", "") or "").strip() != str(poisoned.get("synopsis", "") or "").strip()
         marker_changed = bool(baseline.get("poison_marker", False)) != bool(poisoned.get("poison_marker", False))
         payload_changed = (
@@ -289,29 +285,6 @@ def _bulk_diff_summary(
         "target_is_poisoned": target_poisoned,
         "sample_changed_docs": sample_changed,
     }
-
-
-def _attack_by_attack_analysis(
-    *,
-    baseline_docs: list[dict[str, Any]],
-    attack_config: AttackConfig,
-) -> dict[str, Any]:
-    analyses: dict[str, Any] = {}
-    for attack_type in ("prompt_injection", "targeted_promotion", "untargeted_degradation"):
-        variant = AttackConfig(
-            attack_type=attack_type,  # type: ignore[arg-type]
-            poison_fraction=float(attack_config.poison_fraction),
-            target_movie_id=attack_config.target_movie_id,
-            payload_text=attack_config.payload_text,
-            keyword_list=list(attack_config.keyword_list),
-        )
-        variant_docs = apply_poisoning(baseline_docs, variant)
-        analyses[attack_type] = _bulk_diff_summary(
-            baseline_docs=baseline_docs,
-            poisoned_docs=variant_docs,
-            target_movie_id=attack_config.target_movie_id,
-        )
-    return analyses
 
 
 def _index_diff_summary(
@@ -775,13 +748,3 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
     return payload
 
-
-def _normalize_genres(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, str):
-        text = value.strip()
-        if text == "":
-            return []
-        return [part.strip() for part in text.split("|") if part.strip()]
-    return []

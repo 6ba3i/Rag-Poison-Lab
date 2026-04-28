@@ -443,12 +443,6 @@ TODO: confirm whether these zero-length placeholders are intentional roadmap stu
 - `rag/retrieval/mappings.py`
 - `rag/retrieval/query_builder.py`
 - `rag/retrieval/schemas.py`
-- `api/app/services/attack_service.py`
-- `common/schemas/rec_types.py`
-- `common/utils/fs.py`
-- `common/utils/validation.py`
-- `agent/policies/attack_profiles.py`
-- `tools/tmdb_enrich.py`
 - `docker/scripts/bootstrap_local_models.sh`
 - `conf/app_defaults.yaml`
 

@@ -6,6 +6,7 @@ from agent.attacks.base import UNRELATED_SYNOPSIS_TEXT, clone_docs, select_poiso
 from agent.attacks.prompt_injection import apply_prompt_injection
 from agent.attacks.targeted_promotion import apply_targeted_promotion
 from common.schemas.attack_config import AttackConfig
+from common.utils.genres import normalize_genres
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ def _apply_untargeted_degradation(
     if not selected:
         return output
 
-    original_genres = [_normalize_genres(output[idx].get("genres", [])) for idx in selected]
+    original_genres = [normalize_genres(output[idx].get("genres", [])) for idx in selected]
     if len(original_genres) > 1:
         rotated_genres = original_genres[1:] + original_genres[:1]
     else:
@@ -90,17 +91,6 @@ def _apply_untargeted_degradation(
         doc["poison_payload"] = ""
 
     return output
-
-
-def _normalize_genres(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, str):
-        text = value.strip()
-        if text == "":
-            return []
-        return [part.strip() for part in text.split("|") if part.strip()]
-    return []
 
 
 def _selected_movie_ids(docs: list[dict[str, object]], selected: list[int], *, limit: int = 10) -> list[int]:

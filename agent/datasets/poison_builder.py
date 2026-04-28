@@ -16,6 +16,7 @@ from api.app.data.paths import (
 )
 from api.app.settings import get_settings
 from common.schemas.attack_config import load_attack_config
+from common.utils.genres import normalize_genres
 
 POISONED_BULK_META_JSON = "es_bulk_poisoned_movies.meta.json"
 DIAGNOSTIC_SAMPLE_LIMIT = 10
@@ -235,7 +236,7 @@ def _poison_diagnostics(
     for movie_id, poisoned_doc in poisoned_by_id.items():
         baseline_doc = baseline_by_id.get(movie_id, {})
         title_changed = str(baseline_doc.get("title", "") or "").strip() != str(poisoned_doc.get("title", "") or "").strip()
-        genres_changed = _normalize_genres(baseline_doc.get("genres", [])) != _normalize_genres(poisoned_doc.get("genres", []))
+        genres_changed = normalize_genres(baseline_doc.get("genres", [])) != normalize_genres(poisoned_doc.get("genres", []))
         synopsis_changed = (
             str(baseline_doc.get("synopsis", "") or "").strip() != str(poisoned_doc.get("synopsis", "") or "").strip()
         )
@@ -299,13 +300,3 @@ def _poison_diagnostics(
         "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
     }
 
-
-def _normalize_genres(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, str):
-        text = value.strip()
-        if text == "":
-            return []
-        return [part.strip() for part in text.split("|") if part.strip()]
-    return []

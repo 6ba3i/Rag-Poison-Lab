@@ -831,8 +831,8 @@ def _load_json_payload(raw_response: str) -> object | None:
 
     try:
         return json.loads(text)
-    except Exception:  # noqa: BLE001
-        pass
+    except json.JSONDecodeError as exc:
+        logger.debug("Rerank response is not top-level JSON; trying fallback parsers: %s", exc)
 
     for match in JSON_FENCE_PATTERN.finditer(text):
         block = match.group(1).strip()

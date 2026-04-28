@@ -13,6 +13,7 @@ from api.app.services.orchestration_service import ExperimentOrchestrator, Exper
 from common.schemas.api_types import ExperimentRunRequest, ExperimentRunResponse
 
 router = APIRouter(tags=["experiments"])
+logger = logging.getLogger(__name__)
 
 
 class _ThreadLogCaptureHandler(logging.Handler):
@@ -65,8 +66,8 @@ def run_experiment_stream(payload: ExperimentRunRequest) -> StreamingResponse:
         finally:
             try:
                 root_logger.removeHandler(handler)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to detach stream log capture handler", exc_info=exc)
             event_queue.put(None)
 
     worker = threading.Thread(target=_worker, name="experiment-run-stream", daemon=True)
