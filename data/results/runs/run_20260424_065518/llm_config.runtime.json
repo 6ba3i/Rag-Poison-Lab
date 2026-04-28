@@ -1,0 +1,12 @@
+{
+  "attacker": {
+    "model": "claude-sonnet-4-6",
+    "provider": "claude"
+  },
+  "ranking_mode": "llm_rerank",
+  "retrieval_mode": "hybrid",
+  "victim": {
+    "model": "gemini-2.5-pro",
+    "provider": "gemini"
+  }
+}

@@ -1,0 +1,2 @@
+combo_index,label,status,failed_step,error_message,attack_type,retrieval_mode,ranking_mode,victim_provider,victim_model,attacker_provider,attacker_model,pair_type,requested_poison_fraction,run_dir,updated_at_utc
+4,full_20260427_045001_00004_tprom_kbr_hyb_llm_vge25p_aqw35p_p0p2_cross20_ee21bac0,failed,eval_run,step eval_run failed (see run.log),targeted_promotion,hybrid,llm_rerank,gemini,gemini-2.5-pro,qwen,qwen-3.5-plus,cross20,0.2,data/results/full_debug/full_20260427_045001_00004_tprom_kbr_hyb_llm_vge25p_aqw35p_p0p2_cross20_ee21bac0,2026-04-27T04:56:26.232113+00:00

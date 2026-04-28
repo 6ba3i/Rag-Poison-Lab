@@ -1,0 +1,12 @@
+{
+  "attacker": {
+    "model": "deepseek-v4-pro",
+    "provider": "deepseek"
+  },
+  "ranking_mode": "llm_rerank",
+  "retrieval_mode": "hybrid",
+  "victim": {
+    "model": "gemini-2.5-pro",
+    "provider": "gemini"
+  }
+}

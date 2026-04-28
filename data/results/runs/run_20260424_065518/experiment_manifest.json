@@ -1,0 +1,55 @@
+{
+  "attack_config_path": "/workspace/data/config/attack_config.json",
+  "attack_config_sha256": "6770fd90a734755727bd50f04259bbc74f2d282e60dd28b7a871200641b0281e",
+  "defense_config_path": "/workspace/data/config/defense_config.json",
+  "defense_config_sha256": null,
+  "evaluated_users": 1,
+  "generated_at_utc": "2026-04-24T06:56:11.562773+00:00",
+  "index_provenance": {
+    "movies": {
+      "logical_index": "movies",
+      "physical_index": "movies__20260424065507_703a4ecd5bac",
+      "provenance": {
+        "bulk_sha256": "703a4ecd5bac98c162483dfa9c741917274faf88aa40e75889c89259e5f4a80d",
+        "indexed_at_utc": "2026-04-24T06:55:08.044469+00:00",
+        "logical_index": "movies",
+        "mapping_sha256": "7d30a0a5b9740be0c01d9c8b4f0040e2b242be7233650d397e7e106ce9816e4b",
+        "physical_index": "movies__20260424065507_703a4ecd5bac"
+      }
+    },
+    "movies_poisoned": {
+      "logical_index": "movies_poisoned",
+      "physical_index": "movies_poisoned__20260424065509_014d7d653cb1",
+      "provenance": {
+        "attack_config_sha256": "6770fd90a734755727bd50f04259bbc74f2d282e60dd28b7a871200641b0281e",
+        "attack_type": "targeted_promotion",
+        "bulk_sha256": "014d7d653cb148705a4745fb5101874cc7594719a88399194a779dfe4d56000f",
+        "generated_at_utc": "2026-04-24T06:55:08.862516+00:00",
+        "indexed_at_utc": "2026-04-24T06:55:09.773448+00:00",
+        "logical_index": "movies_poisoned",
+        "mapping_sha256": "7d30a0a5b9740be0c01d9c8b4f0040e2b242be7233650d397e7e106ce9816e4b",
+        "output_bulk_sha256": "014d7d653cb148705a4745fb5101874cc7594719a88399194a779dfe4d56000f",
+        "physical_index": "movies_poisoned__20260424065509_014d7d653cb1",
+        "poison_fraction": 0.1,
+        "poisoned_bulk_meta_path": "/home/infiniflow/Rag-Poison-Lab/data/processed/es_bulk_poisoned_movies.meta.json",
+        "poisoned_docs": 168,
+        "source_bulk_sha256": "703a4ecd5bac98c162483dfa9c741917274faf88aa40e75889c89259e5f4a80d",
+        "target_movie_id": 1666,
+        "total_docs": 1682
+      }
+    }
+  },
+  "k": 10,
+  "label": "run_20260424_065518",
+  "metrics_path": "/workspace/data/results/runs/run_20260424_065518/metrics.json",
+  "mode": "single",
+  "repeat_count": 1,
+  "requested_users": 1,
+  "runtime_snapshot_paths": {
+    "attack_config_runtime_path": "/workspace/data/results/runs/run_20260424_065518/attack_config.runtime.json",
+    "defense_config_runtime_path": "/workspace/data/results/runs/run_20260424_065518/defense_config.runtime.json",
+    "llm_config_runtime_path": "/workspace/data/results/runs/run_20260424_065518/llm_config.runtime.json"
+  },
+  "seed": 42,
+  "skipped_users": 0
+}
