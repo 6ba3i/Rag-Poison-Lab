@@ -271,9 +271,9 @@ def test_gemini_provider_uses_openai_compatible_on_novai(monkeypatch: pytest.Mon
     monkeypatch.setattr(openai_compatible.httpx, "post", fake_compat_post)
 
     provider = GeminiProvider(
-        model="gemini-2.5-pro",
+        model="[次]gemini-3.1-pro-preview",
         api_key="gemini-key",
-        curated_models=["gemini-2.5-pro"],
+        curated_models=["[次]gemini-3.1-pro-preview"],
         base_url="https://once.novai.su/v1",
     )
     output = provider.generate(prompt="hello", response_format_mode="json_object")
@@ -420,6 +420,81 @@ def test_openai_compatible_client_retries_transport_timeout_once(monkeypatch: py
 
     assert output == "ok"
     assert calls == 2
+
+
+def test_openai_compatible_client_retries_invalid_json_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    class InvalidJsonResponse:
+        status_code = 200
+        request = None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> object:
+        del url, headers, json, timeout
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return InvalidJsonResponse()
+        return FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    client = openai_compatible.OpenAICompatibleClient(base_url="https://api.example.com/v1", api_key="k", timeout=30.0)
+    output = client.generate(model="m", prompt="hello")
+
+    assert output == "ok"
+    assert calls == 2
+
+
+def test_openai_compatible_client_invalid_json_exhausts_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    class InvalidJsonResponse:
+        status_code = 200
+        request = None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> object:
+        del url, headers, json, timeout
+        nonlocal calls
+        calls += 1
+        return InvalidJsonResponse()
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    client = openai_compatible.OpenAICompatibleClient(base_url="https://api.example.com/v1", api_key="k", timeout=30.0)
+
+    with pytest.raises(RuntimeError, match="OpenAI-compatible request failed: OpenAI-compatible response was not valid JSON"):
+        client.generate(model="m", prompt="hello")
+
+    assert calls == 2
+
+
+def test_openai_compatible_client_http_400_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        del url, headers, json, timeout
+        nonlocal calls
+        calls += 1
+        return FakeResponse(400, {"error": "bad request"})
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    client = openai_compatible.OpenAICompatibleClient(base_url="https://api.example.com/v1", api_key="k", timeout=30.0)
+
+    with pytest.raises(RuntimeError, match="OpenAI-compatible request failed: HTTP 400"):
+        client.generate(model="m", prompt="hello")
+
+    assert calls == 1
 
 
 def test_anthropic_client_retries_transport_timeout_once(monkeypatch: pytest.MonkeyPatch) -> None:

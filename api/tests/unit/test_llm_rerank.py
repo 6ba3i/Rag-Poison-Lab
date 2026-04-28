@@ -176,6 +176,8 @@ def test_invalid_json_repair_retry_can_succeed() -> None:
     assert len(llm.calls) == 2
     assert llm.calls[0].get("json_schema") is not None
     assert llm.calls[1].get("json_schema") is not None
+    assert llm.calls[0].get("max_tokens") == 1024
+    assert llm.calls[1].get("max_tokens") == 1024
     assert "previous response did not match the required json format" in str(llm.calls[1].get("prompt", "")).lower()
 
 
@@ -202,6 +204,9 @@ def test_invalid_json_repair_final_retry_can_succeed() -> None:
     assert result.rerank_raw_response == "not-json"
     assert result.rerank_retry_raw_response == "[3,1,2]"
     assert len(llm.calls) == 3
+    assert llm.calls[0].get("max_tokens") == 1024
+    assert llm.calls[1].get("max_tokens") == 1024
+    assert llm.calls[2].get("max_tokens") == 1024
     assert "previous response did not match the required json format" in str(llm.calls[1].get("prompt", "")).lower()
     assert "raw json only" in str(llm.calls[2].get("prompt", "")).lower()
 
@@ -389,6 +394,7 @@ def test_deepseek_rerank_options_forwarded_and_json_object_output_applies() -> N
     assert llm.calls
     assert llm.calls[0].get("response_format_mode") == "json_object"
     assert llm.calls[0].get("request_extras") == {"thinking": {"type": "disabled"}}
+    assert llm.calls[0].get("max_tokens") == 1024
 
 
 def test_non_integer_indices_trigger_fallback_reason() -> None:

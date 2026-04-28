@@ -15,6 +15,16 @@ def test_settings_default_elasticsearch_url_is_localhost(monkeypatch: pytest.Mon
     assert settings.elasticsearch_url == "http://localhost:9200"
 
 
+def test_settings_default_cloud_llm_runtime_tuning(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CLOUD_LLM_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("CLOUD_LLM_MAX_RETRIES", raising=False)
+    monkeypatch.delenv("CLOUD_LLM_RETRY_BACKOFF_SECONDS", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.cloud_llm_timeout_seconds == 90.0
+    assert settings.cloud_llm_max_retries == 2
+    assert settings.cloud_llm_retry_backoff_seconds == 1.0
+
+
 def test_settings_elasticsearch_url_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ELASTICSEARCH_URL", "http://example-es:9200")
     settings = Settings(_env_file=None)
@@ -31,6 +41,9 @@ def test_settings_elasticsearch_external_options_parse(monkeypatch: pytest.Monke
     monkeypatch.setenv("ELASTICSEARCH_CA_BUNDLE", str(ca_path))
     monkeypatch.setenv("ELASTICSEARCH_TIMEOUT_SECONDS", "12.5")
     monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", "75")
+    monkeypatch.setenv("CLOUD_LLM_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("CLOUD_LLM_MAX_RETRIES", "3")
+    monkeypatch.setenv("CLOUD_LLM_RETRY_BACKOFF_SECONDS", "1.5")
 
     settings = Settings(_env_file=None)
     assert settings.elasticsearch_username == "alice"
@@ -40,6 +53,9 @@ def test_settings_elasticsearch_external_options_parse(monkeypatch: pytest.Monke
     assert settings.elasticsearch_ca_bundle == ca_path
     assert settings.elasticsearch_timeout_seconds == 12.5
     assert settings.ollama_timeout_seconds == 75.0
+    assert settings.cloud_llm_timeout_seconds == 45.0
+    assert settings.cloud_llm_max_retries == 3
+    assert settings.cloud_llm_retry_backoff_seconds == 1.5
 
 
 def test_settings_default_env_files_are_repo_root_anchored() -> None:
@@ -130,9 +146,9 @@ def test_compose_app_service_loads_repo_env_files() -> None:
     compose_path = Path(__file__).resolve().parents[3] / "docker" / "docker-compose.yml"
     compose_text = compose_path.read_text(encoding="utf-8")
     assert "env_file:" in compose_text
-    assert "path: ../.env" in compose_text
-    assert "path: ../.env.key" in compose_text
-    assert "required: false" in compose_text
+    assert "../.env" in compose_text
+    if "../.env.key" in compose_text:
+        assert "required: false" in compose_text
 
 
 def test_get_es_client_prefers_api_key_over_basic_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -27,8 +27,8 @@ BACKUP_ATTACK_CONFIG=""
 BACKUP_LLM_CONFIG=""
 
 COMBOS=(
-  "deepseek|deepseek-v4-pro|dsk|gemini|gemini-2.5-pro|gem"
-  "gemini|gemini-2.5-pro|gem|deepseek|deepseek-v4-pro|dsk"
+  "deepseek|deepseek-v4-pro|dsk|gemini|[次]gemini-3.1-pro-preview|gem"
+  "gemini|[次]gemini-3.1-pro-preview|gem|deepseek|deepseek-v4-pro|dsk"
   "claude|claude-sonnet-4-6|cld|chatgpt|gpt-5.4|gpt"
   "chatgpt|gpt-5.4|gpt|claude|claude-sonnet-4-6|cld"
   "qwen|qwen-3.5-plus|qwn|chatgpt|gpt-5.4|gpt"

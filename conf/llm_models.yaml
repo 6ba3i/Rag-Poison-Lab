@@ -3,7 +3,7 @@ chatgpt:
 claude:
   - claude-sonnet-4-6
 gemini:
-  - gemini-2.5-pro
+  - "[次]gemini-3.1-pro-preview"
 qwen:
   - qwen-3.5-plus
 deepseek:

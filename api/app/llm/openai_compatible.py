@@ -74,13 +74,26 @@ class OpenAICompatibleClient:
 
         self.last_response_model = None
         try:
-            response = execute_with_retry(
-                send=lambda: httpx.post(
+            def _send_request() -> httpx.Response:
+                response = httpx.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers,
                     json=payload,
                     timeout=self.timeout,
-                ),
+                )
+                if response.status_code >= 400:
+                    return response
+                try:
+                    response.json()
+                except ValueError as exc:
+                    raise httpx.ReadError(
+                        "OpenAI-compatible response was not valid JSON",
+                        request=getattr(response, "request", None),
+                    ) from exc
+                return response
+
+            response = execute_with_retry(
+                send=_send_request,
                 max_retries=self.max_retries,
                 retry_backoff_seconds=self.retry_backoff_seconds,
             )
