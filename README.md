@@ -1,8 +1,7 @@
 # RAGPoison
 
 RAGPoison is a reproducible MovieLens 100K platform for studying retrieval poisoning effects on recommendations, traces, and evaluation metrics across baseline and attacked indices.  
-[Sources: api/app/main.py, api/app/services/recs_service.py, api/app/services/trace_service.py, api/app/eval/runner.py, docker/docker-compose.yml]
-
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/6ba3i/Rag-Poison-Lab)
 ## Table of Contents
 
 - [Overview](#overview)
@@ -293,9 +292,6 @@ Data persistence note:
 
 [Sources: docker/docker-compose.yml, docker/docker-compose.dev.yml]
 
-### Production run notes
-
-TODO: production deployment topology, ingress/TLS, and operations guidance are not defined in this repository.
 
 ## Project layout
 
@@ -434,21 +430,6 @@ Marker and default selection behavior are defined in `pytest.ini`.
   [Sources: api/app/cli/commands_index.py, api/app/services/indexing_service.py]
 - Use Kibana to inspect `movies*` indices.  
   [Source: docker/docker-compose.yml]
-
-### Implementation-status TODO
-
-TODO: confirm whether these zero-length placeholders are intentional roadmap stubs or deprecated artifacts:
-
-- `rag/retrieval/es_client.py`
-- `rag/retrieval/mappings.py`
-- `rag/retrieval/query_builder.py`
-- `rag/retrieval/schemas.py`
-- `docker/scripts/bootstrap_local_models.sh`
-- `conf/app_defaults.yaml`
-
-## CI and releases
-
-TODO: no CI workflow definitions or release automation files were found (for example under `.github/workflows/`).
 
 ## Troubleshooting
 
