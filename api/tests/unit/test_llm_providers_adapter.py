@@ -22,13 +22,24 @@ class FakeResponse:
     def __init__(self, status_code: int, payload: object) -> None:
         self.status_code = status_code
         self._payload = payload
+        self.request: httpx.Request | None = None
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
+            raise httpx.HTTPStatusError(
+                f"HTTP {self.status_code}",
+                request=self.request or httpx.Request("POST", "https://api.example.com/v1/chat/completions"),
+                response=httpx.Response(self.status_code, request=self.request or httpx.Request("POST", "https://api.example.com/v1/chat/completions")),
+            )
 
     def json(self) -> object:
         return self._payload
+
+
+def _make_response(status_code: int, payload: object, *, url: str = "https://api.example.com/v1/chat/completions") -> FakeResponse:
+    response = FakeResponse(status_code, payload)
+    response.request = httpx.Request("POST", url)
+    return response
 
 
 def _build_settings_for_registry(tmp_path: Path, **overrides: object) -> Settings:
@@ -412,7 +423,7 @@ def test_openai_compatible_client_retries_transport_timeout_once(monkeypatch: py
         calls += 1
         if calls == 1:
             raise httpx.ReadTimeout("timed out")
-        return FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})
+        return _make_response(200, {"choices": [{"message": {"content": "ok"}}]})
 
     monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
     client = openai_compatible.OpenAICompatibleClient(base_url="https://api.example.com/v1", api_key="k", timeout=30.0)
@@ -441,7 +452,7 @@ def test_openai_compatible_client_retries_invalid_json_once(monkeypatch: pytest.
         calls += 1
         if calls == 1:
             return InvalidJsonResponse()
-        return FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})
+        return _make_response(200, {"choices": [{"message": {"content": "ok"}}]})
 
     monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
     client = openai_compatible.OpenAICompatibleClient(base_url="https://api.example.com/v1", api_key="k", timeout=30.0)
@@ -486,7 +497,7 @@ def test_openai_compatible_client_http_400_is_not_retried(monkeypatch: pytest.Mo
         del url, headers, json, timeout
         nonlocal calls
         calls += 1
-        return FakeResponse(400, {"error": "bad request"})
+        return _make_response(400, {"error": "bad request"})
 
     monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
     client = openai_compatible.OpenAICompatibleClient(base_url="https://api.example.com/v1", api_key="k", timeout=30.0)
@@ -495,6 +506,84 @@ def test_openai_compatible_client_http_400_is_not_retried(monkeypatch: pytest.Mo
         client.generate(model="m", prompt="hello")
 
     assert calls == 1
+
+
+def test_openai_compatible_client_novai_upstream_400_retries_and_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        del headers, json, timeout
+        nonlocal calls
+        calls += 1
+        assert url == "https://once.novai.su/v1/chat/completions"
+        if calls == 1:
+            return _make_response(
+                400,
+                {
+                    "error": {
+                        "code": "",
+                        "message": "请求失败 [up_bad_request; g=22; c=241; r=req_123]",
+                        "type": "new_api_error",
+                    }
+                },
+                url=url,
+            )
+        return _make_response(200, {"choices": [{"message": {"content": "ok"}}]}, url=url)
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    client = openai_compatible.OpenAICompatibleClient(
+        base_url="https://once.novai.su/v1",
+        api_key="k",
+        timeout=30.0,
+        max_retries=1,
+    )
+
+    output = client.generate(model="m", prompt="hello")
+
+    assert output == "ok"
+    assert calls == 2
+
+
+def test_openai_compatible_client_novai_upstream_400_uses_us_failover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_post(url: str, headers: dict[str, str], json: dict[str, object], timeout: float) -> FakeResponse:
+        del headers, json, timeout
+        calls.append(url)
+        if url == "https://once.novai.su/v1/chat/completions":
+            return _make_response(
+                400,
+                {
+                    "error": {
+                        "code": "",
+                        "message": "请求失败 [up_bad_request; g=auto; c=241; r=req_456]",
+                        "type": "new_api_error",
+                    }
+                },
+                url=url,
+            )
+        assert url == "https://us.novaiapi.com/v1/chat/completions"
+        return _make_response(200, {"choices": [{"message": {"content": "ok"}}]}, url=url)
+
+    monkeypatch.setattr(openai_compatible.httpx, "post", fake_post)
+    client = openai_compatible.OpenAICompatibleClient(
+        base_url="https://once.novai.su/v1",
+        api_key="k",
+        timeout=30.0,
+        max_retries=0,
+    )
+
+    output = client.generate(model="m", prompt="hello")
+
+    assert output == "ok"
+    assert calls == [
+        "https://once.novai.su/v1/chat/completions",
+        "https://us.novaiapi.com/v1/chat/completions",
+    ]
 
 
 def test_anthropic_client_retries_transport_timeout_once(monkeypatch: pytest.MonkeyPatch) -> None:

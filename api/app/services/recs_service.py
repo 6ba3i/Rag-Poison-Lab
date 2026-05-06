@@ -102,6 +102,17 @@ Latest invalid response:
 logger = logging.getLogger(__name__)
 
 
+def _format_rerank_exception(exc: Exception) -> str:
+    base = f"{type(exc).__name__}: {exc}"
+    status_code = getattr(exc, "response", None)
+    status_value: int | None = None
+    if status_code is not None:
+        status_value = getattr(status_code, "status_code", None)
+    if isinstance(status_value, int):
+        base += f" [status_code={status_value}]"
+    return _truncate(base, RERANK_ERROR_MAX_CHARS)
+
+
 @dataclass(frozen=True)
 class RankingResult:
     requested_ranking_mode: RankingMode
@@ -262,7 +273,7 @@ def rank_candidates_for_mode(
                     )
                 ).strip()
             except Exception as retry_exc:  # noqa: BLE001
-                rerank_error = _truncate(f"{type(retry_exc).__name__}: {retry_exc}", RERANK_ERROR_MAX_CHARS)
+                rerank_error = _format_rerank_exception(retry_exc)
                 logger.warning("LLM rerank fallback: generation failed: %s", retry_exc)
                 return RankingResult(
                     requested_ranking_mode=ranking_mode,
@@ -279,7 +290,7 @@ def rank_candidates_for_mode(
                     rerank_json_object_key=rerank_options.json_object_key,
                 )
         else:
-            rerank_error = _truncate(f"{type(exc).__name__}: {exc}", RERANK_ERROR_MAX_CHARS)
+            rerank_error = _format_rerank_exception(exc)
             logger.warning("LLM rerank fallback: generation failed: %s", exc)
             return RankingResult(
                 requested_ranking_mode=ranking_mode,
@@ -325,7 +336,7 @@ def rank_candidates_for_mode(
                 )
             ).strip()
         except Exception as exc:  # noqa: BLE001
-            rerank_error = _truncate(f"{type(exc).__name__}: {exc}", RERANK_ERROR_MAX_CHARS)
+            rerank_error = _format_rerank_exception(exc)
             logger.warning("LLM rerank fallback: repair retry generation failed: %s", exc)
             return RankingResult(
                 requested_ranking_mode=ranking_mode,
@@ -371,7 +382,7 @@ def rank_candidates_for_mode(
                     )
                 ).strip()
             except Exception as exc:  # noqa: BLE001
-                rerank_error = _truncate(f"{type(exc).__name__}: {exc}", RERANK_ERROR_MAX_CHARS)
+                rerank_error = _format_rerank_exception(exc)
                 logger.warning("LLM rerank fallback: final repair retry generation failed: %s", exc)
                 return RankingResult(
                     requested_ranking_mode=ranking_mode,

@@ -74,14 +74,42 @@ class OpenAICompatibleClient:
 
         self.last_response_model = None
         try:
+            response = self._send_with_novai_fallback(
+                headers=headers,
+                payload=payload,
+            )
+            body = response.json()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"OpenAI-compatible request failed: {exc}") from exc
+
+        text, response_model = _extract_text_and_model(body)
+        self.last_response_model = response_model
+        return text
+
+    def _send_with_novai_fallback(
+        self,
+        *,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> httpx.Response:
+        base_urls = [self.base_url]
+        novai_fallback_base = "https://us.novaiapi.com/v1"
+        if _is_novai_base_url(self.base_url) and self.base_url.rstrip("/") != novai_fallback_base:
+            base_urls.append(novai_fallback_base)
+
+        last_exc: Exception | None = None
+        for base_index, base_url in enumerate(base_urls):
+
             def _send_request() -> httpx.Response:
                 response = httpx.post(
-                    f"{self.base_url}/chat/completions",
+                    f"{base_url}/chat/completions",
                     headers=headers,
                     json=payload,
                     timeout=self.timeout,
                 )
                 if response.status_code >= 400:
+                    if _is_novai_upstream_bad_request(response):
+                        raise _NovaiUpstreamBadRequest.from_response(response)
                     return response
                 try:
                     response.json()
@@ -92,18 +120,90 @@ class OpenAICompatibleClient:
                     ) from exc
                 return response
 
-            response = execute_with_retry(
-                send=_send_request,
-                max_retries=self.max_retries,
-                retry_backoff_seconds=self.retry_backoff_seconds,
-            )
-            body = response.json()
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"OpenAI-compatible request failed: {exc}") from exc
+            try:
+                return execute_with_retry(
+                    send=_send_request,
+                    max_retries=self.max_retries,
+                    retry_backoff_seconds=self.retry_backoff_seconds,
+                )
+            except _NovaiUpstreamBadRequest as exc:
+                last_exc = exc
+                if base_index < len(base_urls) - 1:
+                    continue
+                raise
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                raise
 
-        text, response_model = _extract_text_and_model(body)
-        self.last_response_model = response_model
-        return text
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("OpenAI-compatible request failed without response")
+
+
+class _NovaiUpstreamBadRequest(httpx.TransportError):
+    def __init__(self, message: str, *, request: httpx.Request | None = None, response: httpx.Response | None = None) -> None:
+        super().__init__(message, request=request)
+        self.response = response
+
+    @classmethod
+    def from_response(cls, response: httpx.Response) -> "_NovaiUpstreamBadRequest":
+        request = getattr(response, "request", None)
+        try:
+            response_json = response.json()
+        except Exception:  # noqa: BLE001
+            response_json = None
+        detail = _truncate_error_detail(_extract_novai_error_detail(response_json), limit=320)
+        message = f"HTTP {response.status_code}"
+        if detail is not None:
+            message += f" ({detail})"
+        return cls(message, request=request, response=response)
+
+
+def _is_novai_base_url(base_url: str) -> bool:
+    lowered = base_url.strip().lower()
+    return "novai" in lowered
+
+
+def _is_novai_upstream_bad_request(response: httpx.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001
+        return False
+    detail = _extract_novai_error_detail(payload)
+    if detail is None:
+        return False
+    lowered = detail.lower()
+    return "up_bad_request" in lowered or "请求失败" in detail
+
+
+def _extract_novai_error_detail(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if isinstance(error, dict):
+        for key in ("message", "code", "type"):
+            value = error.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                if key == "message":
+                    return text
+        return None
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    return None
+
+
+def _truncate_error_detail(value: str | None, *, limit: int) -> str | None:
+    if value is None:
+        return None
+    compact = " ".join(value.split())
+    if compact == "":
+        return None
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit].rstrip() + "..."
 
 
 def _extract_text(body: object) -> str:

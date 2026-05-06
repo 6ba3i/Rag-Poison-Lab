@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -44,6 +45,13 @@ class _TimeoutThenSuccessLlm:
 class _AlwaysTimeoutLlm:
     def generate(self, **_: object) -> str:
         raise RuntimeError("Claude request failed: The read operation timed out")
+
+
+class _FailingLlmWithStatus:
+    def generate(self, **_: object) -> str:
+        request = httpx.Request("POST", "https://once.novai.su/v1/chat/completions")
+        response = httpx.Response(400, request=request)
+        raise httpx.HTTPStatusError("bad request", request=request, response=response)
 
 
 class _SequenceLlm:
@@ -326,6 +334,20 @@ def test_timeout_twice_still_falls_back_generation_failed() -> None:
     assert result.rerank_fallback_reason == "generation_failed"
     assert result.rerank_error is not None
     assert "timed out" in result.rerank_error.lower()
+
+
+def test_generation_failure_includes_http_status_code_in_rerank_error() -> None:
+    result = rank_candidates_for_mode(
+        context=_context(),
+        candidates=_candidates(),
+        ranking_mode="llm_rerank",
+        k=3,
+        llm_client=_FailingLlmWithStatus(),
+    )
+
+    assert result.rerank_fallback is True
+    assert result.rerank_error is not None
+    assert "status_code=400" in result.rerank_error
 
 
 def test_json_array_with_surrounding_text_is_accepted() -> None:
