@@ -13,3 +13,5 @@ web/dist/
 api/app/static/
 
 __pycache__/
+.omx
+graphify-out
