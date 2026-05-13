@@ -1,0 +1,12 @@
+{
+  "attacker": {
+    "model": "gpt-5.4",
+    "provider": "chatgpt"
+  },
+  "ranking_mode": "llm_rerank",
+  "retrieval_mode": "hybrid",
+  "victim": {
+    "model": "gpt-5.4",
+    "provider": "chatgpt"
+  }
+}

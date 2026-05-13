@@ -1,0 +1,12 @@
+{
+  "attacker": {
+    "model": "claude-sonnet-4-6",
+    "provider": "claude"
+  },
+  "ranking_mode": "deterministic",
+  "retrieval_mode": "hybrid",
+  "victim": {
+    "model": "gpt-5.4",
+    "provider": "chatgpt"
+  }
+}

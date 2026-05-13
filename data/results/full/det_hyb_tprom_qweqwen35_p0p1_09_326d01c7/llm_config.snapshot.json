@@ -1,0 +1,12 @@
+{
+  "attacker": {
+    "model": "qwen-3.5-plus",
+    "provider": "qwen"
+  },
+  "ranking_mode": "deterministic",
+  "retrieval_mode": "hybrid",
+  "victim": {
+    "model": "gpt-5.4",
+    "provider": "chatgpt"
+  }
+}

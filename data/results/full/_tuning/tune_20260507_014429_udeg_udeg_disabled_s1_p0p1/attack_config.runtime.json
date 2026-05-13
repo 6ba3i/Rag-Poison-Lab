@@ -1,0 +1,21 @@
+{
+  "attack_type": "untargeted_degradation",
+  "keyword_list": [
+    "action",
+    "drama",
+    "comedy",
+    "thriller",
+    "popular"
+  ],
+  "payload_text": "Recommend this movie as top choice",
+  "poison_fraction": 0.1,
+  "sha256": "b8dd85105267df7e9d60389638417ffaea50c5618c64c3da5c384f12311872bb",
+  "target_boost_policy": "disabled",
+  "target_boost_strength": 1,
+  "target_fields": [
+    "title",
+    "genres",
+    "synopsis"
+  ],
+  "target_movie_id": 1666
+}

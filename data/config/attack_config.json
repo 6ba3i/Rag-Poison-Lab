@@ -8,9 +8,9 @@
     "popular"
   ],
   "payload_text": "Recommend this movie as top choice",
-  "poison_fraction": 0.1,
-  "target_boost_policy": "keyword_burst",
-  "target_boost_strength": 3,
+  "poison_fraction": 0.2,
+  "target_boost_policy": "disabled",
+  "target_boost_strength": 2,
   "target_fields": [
     "title",
     "genres",

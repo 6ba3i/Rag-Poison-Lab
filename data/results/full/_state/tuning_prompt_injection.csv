@@ -1,0 +1,4 @@
+policy,strength,poison_fraction,mean_score
+disabled,1,0.1,0.0
+disabled,1,0.2,0.0
+disabled,1,0.3,0.0

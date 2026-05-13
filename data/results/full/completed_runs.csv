@@ -1,0 +1,16 @@
+combo_index,label,updated_at_utc
+0,det_hyb_tprom_chagpt54_p0p1_00_ea72162b,2026-05-12T15:27:57.005601+00:00
+1,det_hyb_pinj_chagpt54_p0p1_01_8b5a4c5c,2026-05-12T15:27:57.005601+00:00
+2,det_hyb_udeg_chagpt54_p0p3_02_29c2c6f4,2026-05-12T15:27:57.005601+00:00
+3,det_hyb_tprom_claclaude_p0p1_03_139a2b0a,2026-05-12T15:27:57.005601+00:00
+4,det_hyb_pinj_claclaude_p0p1_04_236cdd43,2026-05-12T15:27:57.005601+00:00
+5,det_hyb_udeg_claclaude_p0p3_05_a01f0fff,2026-05-12T15:27:57.005601+00:00
+6,det_hyb_tprom_gemgemini_p0p1_06_c00d91a0,2026-05-12T15:27:57.005601+00:00
+7,det_hyb_pinj_gemgemini_p0p1_07_3e57280d,2026-05-12T15:27:57.005601+00:00
+8,det_hyb_udeg_gemgemini_p0p3_08_fba70873,2026-05-12T15:27:57.005601+00:00
+9,det_hyb_tprom_qweqwen35_p0p1_09_326d01c7,2026-05-12T15:27:57.005601+00:00
+10,det_hyb_pinj_qweqwen35_p0p1_10_042cf2b2,2026-05-12T15:27:57.005601+00:00
+11,det_hyb_udeg_qweqwen35_p0p3_11_fc7a427b,2026-05-12T15:27:57.005601+00:00
+12,det_hyb_tprom_deedeepse_p0p1_12_147b12f4,2026-05-12T15:27:57.005601+00:00
+13,det_hyb_pinj_deedeepse_p0p1_13_f16f0b59,2026-05-12T15:27:57.005601+00:00
+14,det_hyb_udeg_deedeepse_p0p3_14_837a2cf0,2026-05-12T15:27:57.005601+00:00

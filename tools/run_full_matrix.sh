@@ -18,17 +18,23 @@ MAX_RUNS=""
 RESUME=false
 DRY_RUN=false
 FAIL_FAST=true
-PROFILE="forty_mixed"
+PROFILE="deterministic_hybrid_attacker5_attack3"
+REQUESTED_PROFILE=""
+MATRIX_VERSION="deterministic_hybrid_attacker5_attack3_v1"
+MATRIX_SIGNATURE=""
+MATRIX_ATTACKERS_JSON="[]"
+MATRIX_ATTACK_TYPES_CSV="targeted_promotion,prompt_injection,untargeted_degradation"
 
-PROFILE_FORTY_MIXED="forty_mixed"
-PROFILE_FULL_MATRIX="full_matrix"
-PROFILE_GPT_FIXED_ATTACKER="gpt_fixed_attacker_victims4_attack3"
+LLM_MODELS_YAML_PATH="conf/llm_models.yaml"
+STABLE_VICTIM_PROVIDER=""
+STABLE_VICTIM_MODEL=""
+STABLE_VICTIM_TAG=""
+TUNING_PLAN_STATUS="unknown"
+ATTACKER_EXPECTED_COUNT=5
 
-FIXED_ATTACKER_PROVIDER="chatgpt"
-FIXED_ATTACKER_MODEL="gpt-5.4"
-FIXED_ATTACKER_TAG="gpt54"
+FORCE_RETUNE="${FORCE_RETUNE:-false}"
 
-TUNING_BATCH_SIZE=10
+TUNING_BATCH_SIZE=100
 TUNING_POISON_FRACTIONS=("0.1" "0.2" "0.3")
 TUNING_TARGET_POLICIES=("disabled" "keyword_burst" "aggressive")
 TUNING_TARGET_STRENGTHS=("2" "4" "6")
@@ -36,14 +42,8 @@ TUNING_DEFAULT_STRENGTH=3
 TUNING_DISABLED_STRENGTH=1
 TUNING_HARD_FAIL_SCORE="-1000000000.0"
 
-declare -a TUNING_VICTIM_SPECS=(
-  "chatgpt|gpt-5.4|gpt54"
-  "claude|claude-sonnet-4-6|cls46"
-  "qwen|qwen-3.5-plus|qw35p"
-  "deepseek|deepseek-v4-pro|dsv4p"
-)
-
 STATE_DIR=""
+STATE_LOGS_DIR=""
 PROGRESS_JSON=""
 RECORDS_JSON=""
 COMBINED_CSV=""
@@ -53,6 +53,7 @@ FAILURES_MD=""
 COMPLETED_CSV=""
 BEST_ATTACK_PARAMS_JSON=""
 TUNING_RESULTS_ROOT=""
+TUNING_RUN_LOG=""
 
 RUN_ID=""
 TOTAL_COMBOS=0
@@ -62,6 +63,7 @@ BACKUP_LLM_CONFIG=""
 
 declare -A COMPLETED_INDEX
 declare -a COMBO_SPECS
+declare -a ATTACKER_SPECS
 
 usage() {
   cat <<'USAGE'
@@ -74,7 +76,7 @@ Options:
   --k INT                     Top-k for eval (default: 10)
   --repeat-count INT          Repeat count for eval (default: 1)
   --seed INT                  Base seed for eval (default: 42)
-  --profile NAME              Matrix profile: forty_mixed, full_matrix, or gpt_fixed_attacker_victims4_attack3
+  --profile NAME              Deprecated compatibility flag (ignored; deterministic matrix is always used)
   --start-index INT           Start combo index (default: 0)
   --max-runs INT              Stop after N combos processed in this invocation
   --resume                    Resume from checkpoint under <results-root>/_state
@@ -128,8 +130,6 @@ boost_tag() {
 
 retrieval_tag() {
   case "$1" in
-    lexical) echo "lex" ;;
-    dense) echo "dns" ;;
     hybrid) echo "hyb" ;;
     *) echo "ret" ;;
   esac
@@ -138,7 +138,6 @@ retrieval_tag() {
 ranking_tag() {
   case "$1" in
     deterministic) echo "det" ;;
-    llm_rerank) echo "llm" ;;
     *) echo "rank" ;;
   esac
 }
@@ -167,7 +166,7 @@ parse_args() {
         shift 2
         ;;
       --profile)
-        PROFILE="$2"
+        REQUESTED_PROFILE="$2"
         shift 2
         ;;
       --start-index)
@@ -213,12 +212,14 @@ validate_args() {
   if [[ -n "${MAX_RUNS}" ]]; then
     [[ "${MAX_RUNS}" =~ ^[0-9]+$ ]] || die "--max-runs must be a non-negative integer"
   fi
-  if [[ "${PROFILE}" != "${PROFILE_FORTY_MIXED}" && "${PROFILE}" != "${PROFILE_FULL_MATRIX}" && "${PROFILE}" != "${PROFILE_GPT_FIXED_ATTACKER}" ]]; then
-    die "--profile must be one of: ${PROFILE_FORTY_MIXED}, ${PROFILE_FULL_MATRIX}, ${PROFILE_GPT_FIXED_ATTACKER}"
+  PROFILE="${MATRIX_VERSION}"
+  if [[ -n "${REQUESTED_PROFILE}" && "${REQUESTED_PROFILE}" != "${MATRIX_VERSION}" ]]; then
+    log "Ignoring deprecated --profile=${REQUESTED_PROFILE}; runner always uses ${MATRIX_VERSION}"
   fi
 
   [[ -f "${ATTACK_CONFIG_PATH}" ]] || die "Missing attack config: ${ATTACK_CONFIG_PATH}"
   [[ -f "${LLM_CONFIG_PATH}" ]] || die "Missing llm config: ${LLM_CONFIG_PATH}"
+  [[ -f "${LLM_MODELS_YAML_PATH}" ]] || die "Missing attacker models yaml: ${LLM_MODELS_YAML_PATH}"
   command -v uv >/dev/null 2>&1 || die "uv is required"
   command -v python3 >/dev/null 2>&1 || die "python3 is required"
 }
@@ -227,6 +228,8 @@ init_paths() {
   mkdir -p "${RESULTS_ROOT}"
   STATE_DIR="${RESULTS_ROOT}/_state"
   mkdir -p "${STATE_DIR}"
+  STATE_LOGS_DIR="${STATE_DIR}/logs"
+  mkdir -p "${STATE_LOGS_DIR}"
 
   PROGRESS_JSON="${STATE_DIR}/progress.json"
   RECORDS_JSON="${STATE_DIR}/records.json"
@@ -254,6 +257,10 @@ write_progress() {
   TOTAL_COMBOS="${TOTAL_COMBOS}" \
   RUN_ID="${RUN_ID}" \
   PROFILE="${PROFILE}" \
+  MATRIX_VERSION="${MATRIX_VERSION}" \
+  MATRIX_SIGNATURE="${MATRIX_SIGNATURE}" \
+  MATRIX_ATTACKERS_JSON="${MATRIX_ATTACKERS_JSON}" \
+  MATRIX_ATTACK_TYPES_CSV="${MATRIX_ATTACK_TYPES_CSV}" \
   PROGRESS_JSON="${PROGRESS_JSON}" \
   python3 - <<'PY'
 import json
@@ -273,6 +280,10 @@ if path.exists() and path.stat().st_size > 0:
 
 payload["run_id"] = os.environ["RUN_ID"]
 payload["profile"] = os.environ["PROFILE"]
+payload["matrix_version"] = os.environ["MATRIX_VERSION"]
+payload["matrix_signature"] = os.environ["MATRIX_SIGNATURE"]
+payload["matrix_attackers_json"] = os.environ["MATRIX_ATTACKERS_JSON"]
+payload["matrix_attack_types_csv"] = os.environ["MATRIX_ATTACK_TYPES_CSV"]
 payload["status"] = os.environ["STATUS"]
 payload["combo_index"] = int(os.environ["COMBO_INDEX"])
 payload["total_combos"] = int(os.environ["TOTAL_COMBOS"])
@@ -288,46 +299,49 @@ PY
 load_or_initialize_session() {
   if [[ "${RESUME}" == "true" ]]; then
     [[ -f "${PROGRESS_JSON}" ]] || die "--resume requested but ${PROGRESS_JSON} does not exist"
-    local saved_profile
-    saved_profile="$(python3 - "${PROGRESS_JSON}" <<'PY'
+    local progress_summary
+    progress_summary="$(python3 - "${PROGRESS_JSON}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 payload = json.loads(path.read_text(encoding="utf-8"))
-profile = payload.get("profile", "")
-print(str(profile))
+profile = str(payload.get("profile", "") or "")
+matrix_version = str(payload.get("matrix_version", "") or "")
+matrix_signature = str(payload.get("matrix_signature", "") or "")
+run_id = str(payload.get("run_id", "") or "")
+combo_index = int(payload.get("combo_index", 0))
+print(profile)
+print(matrix_version)
+print(matrix_signature)
+print(run_id)
+print(combo_index)
 PY
-)"
+    )"
+    local saved_profile saved_matrix_version saved_matrix_signature saved_run_id checkpoint_index
+    mapfile -t _resume_lines <<< "${progress_summary}"
+    if (( ${#_resume_lines[@]} != 5 )); then
+      die "--resume failed: invalid progress metadata format in ${PROGRESS_JSON}"
+    fi
+    saved_profile="${_resume_lines[0]}"
+    saved_matrix_version="${_resume_lines[1]}"
+    saved_matrix_signature="${_resume_lines[2]}"
+    saved_run_id="${_resume_lines[3]}"
+    checkpoint_index="${_resume_lines[4]}"
+    [[ -n "${saved_run_id}" ]] || die "--resume failed: missing run_id in ${PROGRESS_JSON}"
+    [[ -n "${saved_matrix_version}" ]] || die "--resume failed: missing matrix_version in ${PROGRESS_JSON}; old matrix state cannot be resumed safely"
+    [[ -n "${saved_matrix_signature}" ]] || die "--resume failed: missing matrix_signature in ${PROGRESS_JSON}; old matrix state cannot be resumed safely"
     if [[ -n "${saved_profile}" && "${saved_profile}" != "${PROFILE}" ]]; then
       die "--resume profile mismatch: progress has profile=${saved_profile}, requested profile=${PROFILE}"
     fi
-    RUN_ID="$(python3 - "${PROGRESS_JSON}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-payload = json.loads(path.read_text(encoding="utf-8"))
-run_id = payload.get("run_id")
-if not isinstance(run_id, str) or run_id.strip() == "":
-    raise SystemExit("missing run_id in progress.json")
-print(run_id.strip())
-PY
-)"
-    local checkpoint_index
-    checkpoint_index="$(python3 - "${PROGRESS_JSON}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-payload = json.loads(path.read_text(encoding="utf-8"))
-value = payload.get("combo_index", 0)
-print(int(value))
-PY
-)"
+    if [[ "${saved_matrix_version}" != "${MATRIX_VERSION}" ]]; then
+      die "--resume matrix_version mismatch: progress=${saved_matrix_version} current=${MATRIX_VERSION}"
+    fi
+    if [[ "${saved_matrix_signature}" != "${MATRIX_SIGNATURE}" ]]; then
+      die "--resume matrix_signature mismatch: progress=${saved_matrix_signature} current=${MATRIX_SIGNATURE}"
+    fi
+    RUN_ID="${saved_run_id}"
     if (( checkpoint_index > START_INDEX )); then
       START_INDEX="${checkpoint_index}"
     fi
@@ -431,6 +445,16 @@ attack_payload["attack_type"] = os.environ["ATTACK_TYPE"]
 attack_payload["target_boost_policy"] = os.environ["TARGET_BOOST_POLICY"]
 attack_payload["target_boost_strength"] = int(os.environ["TARGET_BOOST_STRENGTH"])
 attack_payload["poison_fraction"] = float(os.environ["POISON_FRACTION"])
+attack_payload["poison_generation_mode"] = "model_tied"
+attack_payload["poison_generator"] = {
+    "provider": os.environ["ATTACKER_PROVIDER"],
+    "model": os.environ["ATTACKER_MODEL"],
+}
+attack_payload["poison_prompt_profile"] = "model_tied_v1"
+attack_payload["poison_generation_seed"] = 42
+attack_payload["poison_temperature"] = 0.0
+attack_payload["poison_max_tokens"] = 256
+attack_payload["poison_cache_policy"] = "reuse"
 
 llm_payload["retrieval_mode"] = os.environ["RETRIEVAL_MODE"]
 llm_payload["ranking_mode"] = os.environ["RANKING_MODE"]
@@ -472,6 +496,13 @@ if str(written_attack.get("attack_type", "")) != os.environ["ATTACK_TYPE"]:
     raise SystemExit("attack_config attack_type mismatch after write")
 if str(written_attack.get("target_boost_policy", "")) != os.environ["TARGET_BOOST_POLICY"]:
     raise SystemExit("attack_config target_boost_policy mismatch after write")
+if str(written_attack.get("poison_generation_mode", "")) != "model_tied":
+    raise SystemExit("attack_config poison_generation_mode mismatch after write")
+poison_generator = written_attack.get("poison_generator")
+if not isinstance(poison_generator, dict):
+    raise SystemExit("attack_config poison_generator missing/invalid after write")
+if str(poison_generator.get("provider", "")) != os.environ["ATTACKER_PROVIDER"] or str(poison_generator.get("model", "")) != os.environ["ATTACKER_MODEL"]:
+    raise SystemExit("attack_config poison_generator mismatch after write")
 try:
     target_boost_strength = int(written_attack.get("target_boost_strength"))
 except Exception as exc:  # noqa: BLE001
@@ -500,9 +531,26 @@ run_step() {
   {
     printf '\n[%s] STEP %s\n' "$(timestamp_utc)" "${step_name}"
     printf '[%s] CMD  %s\n' "$(timestamp_utc)" "$*"
-  } >> "${run_log}"
+  } | tee -a "${run_log}"
 
-  "$@" >> "${run_log}" 2>&1
+  "$@" 2>&1 | tee -a "${run_log}"
+  local cmd_status="${PIPESTATUS[0]}"
+  return "${cmd_status}"
+}
+
+run_tuning_step() {
+  local tuning_log="$1"
+  local step_name="$2"
+  shift 2
+
+  {
+    printf '\n[%s] TUNING_STEP %s\n' "$(timestamp_utc)" "${step_name}"
+    printf '[%s] TUNING_CMD  %s\n' "$(timestamp_utc)" "$*"
+  } | tee -a "${tuning_log}" >&2
+
+  "$@" 2>&1 | tee -a "${tuning_log}" >&2
+  local cmd_status="${PIPESTATUS[0]}"
+  return "${cmd_status}"
 }
 
 create_error_summary() {
@@ -530,7 +578,7 @@ create_error_summary() {
     echo "## Log Tail"
     echo
     echo '```text'
-    tail -n 80 "${run_log}" || true
+    tail -n 80 "${run_log}" 2>&1 || true
     echo '```'
   } > "${summary_path}"
 }
@@ -552,6 +600,7 @@ upsert_record() {
   local pair_type="${14}"
   local requested_poison_fraction="${15}"
   local run_dir="${16}"
+  local run_log_path="${17}"
 
   RECORDS_JSON="${RECORDS_JSON}" \
   RUN_ID="${RUN_ID}" \
@@ -571,6 +620,7 @@ upsert_record() {
   PAIR_TYPE="${pair_type}" \
   REQUESTED_POISON_FRACTION="${requested_poison_fraction}" \
   RUN_DIR="${run_dir}" \
+  RUN_LOG_PATH="${run_log_path}" \
   K="${K}" \
   REPEAT_COUNT="${REPEAT_COUNT}" \
   python3 - <<'PY'
@@ -632,6 +682,7 @@ record.update(
         "k": int(os.environ["K"]),
         "repeat_count": int(os.environ["REPEAT_COUNT"]),
         "run_dir": os.environ["RUN_DIR"],
+        "run_log_path": os.environ["RUN_LOG_PATH"],
         "updated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
 )
@@ -763,6 +814,7 @@ headers = [
     "target_retrieval_rank_baseline",
     "target_retrieval_rank_attacked",
     "run_dir",
+    "run_log_path",
     "metrics_path",
     "summary_path",
     "delta_csv_path",
@@ -833,6 +885,7 @@ with failures_csv.open("w", encoding="utf-8", newline="") as handle:
             "pair_type",
             "requested_poison_fraction",
             "run_dir",
+            "run_log_path",
             "updated_at_utc",
         ],
     )
@@ -855,6 +908,7 @@ with failures_csv.open("w", encoding="utf-8", newline="") as handle:
                 "pair_type": row.get("pair_type", ""),
                 "requested_poison_fraction": row.get("requested_poison_fraction", ""),
                 "run_dir": row.get("run_dir", ""),
+                "run_log_path": row.get("run_log_path", ""),
                 "updated_at_utc": row.get("updated_at_utc", ""),
             }
         )
@@ -875,6 +929,9 @@ if failure_rows:
                 error=str(row.get("error_message", "")).replace("\n", " ").strip(),
             )
         )
+        run_log_path = str(row.get("run_log_path", "")).strip()
+        if run_log_path:
+            failure_lines.append(f"  log: `{run_log_path}`")
 else:
     failure_lines.append("No failures recorded.")
 failures_md.write_text("\n".join(failure_lines) + "\n", encoding="utf-8")
@@ -906,6 +963,199 @@ default_attack_params_for_type() {
   esac
 }
 
+attacker_tag_from_model() {
+  local provider="$1"
+  local model="$2"
+  TAG_INPUT_PROVIDER="${provider}" TAG_INPUT_MODEL="${model}" python3 - <<'PY'
+import os
+import re
+
+provider = os.environ["TAG_INPUT_PROVIDER"].strip().lower()
+model = os.environ["TAG_INPUT_MODEL"].strip().lower()
+slug = re.sub(r"[^a-z0-9]+", "", model)
+if not slug:
+    slug = "mdl"
+tag = (provider[:3] + slug[:6])[:9]
+print(tag)
+PY
+}
+
+load_attackers_from_yaml() {
+  ATTACKER_SPECS=()
+  local attackers_blob
+  attackers_blob="$(
+    LLM_MODELS_YAML_PATH="${LLM_MODELS_YAML_PATH}" python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["LLM_MODELS_YAML_PATH"])
+try:
+    import yaml
+except Exception as exc:  # noqa: BLE001
+    raise SystemExit(f"PyYAML is required to parse {path}: {exc}") from exc
+
+if not path.exists() or path.stat().st_size == 0:
+    raise SystemExit(f"attacker models yaml missing or empty: {path}")
+
+parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+if not isinstance(parsed, dict):
+    raise SystemExit(f"invalid llm_models yaml shape (expected mapping): {path}")
+
+rows: list[tuple[str, str]] = []
+for provider, raw_models in parsed.items():
+    provider_text = str(provider).strip()
+    if provider_text == "" or provider_text == "local":
+        continue
+    if not isinstance(raw_models, list):
+        raise SystemExit(f"provider '{provider_text}' must map to a list of models")
+    for raw_model in raw_models:
+        model = str(raw_model).strip()
+        if model == "":
+            continue
+        rows.append((provider_text, model))
+
+if not rows:
+    raise SystemExit(f"no attacker models found in {path}")
+
+seen: set[tuple[str, str]] = set()
+for provider, model in rows:
+    key = (provider, model)
+    if key in seen:
+        raise SystemExit(f"duplicate attacker model entry: {provider}:{model}")
+    seen.add(key)
+    print(f"{provider}|{model}")
+PY
+  )"
+
+  while IFS= read -r spec; do
+    [[ -n "${spec}" ]] || continue
+    ATTACKER_SPECS+=("${spec}")
+  done <<< "${attackers_blob}"
+
+  if (( ${#ATTACKER_SPECS[@]} != ATTACKER_EXPECTED_COUNT )); then
+    die "attacker invariant failed: expected ${ATTACKER_EXPECTED_COUNT} attacker models from ${LLM_MODELS_YAML_PATH}, got ${#ATTACKER_SPECS[@]}"
+  fi
+}
+
+resolve_stable_victim_from_attackers() {
+  local first_spec
+  first_spec="${ATTACKER_SPECS[0]}"
+  IFS='|' read -r STABLE_VICTIM_PROVIDER STABLE_VICTIM_MODEL <<< "${first_spec}"
+  [[ -n "${STABLE_VICTIM_PROVIDER}" && -n "${STABLE_VICTIM_MODEL}" ]] || die "failed to resolve stable victim from attacker specs"
+  STABLE_VICTIM_TAG="$(attacker_tag_from_model "${STABLE_VICTIM_PROVIDER}" "${STABLE_VICTIM_MODEL}")"
+}
+
+build_matrix_signature() {
+  local attackers_json
+  attackers_json="$(
+    MATRIX_VERSION="${MATRIX_VERSION}" \
+    MATRIX_ATTACK_TYPES_CSV="${MATRIX_ATTACK_TYPES_CSV}" \
+    ATTACKER_SPECS_BLOB="$(printf '%s\n' "${ATTACKER_SPECS[@]}")" \
+    python3 - <<'PY'
+import json
+import os
+import hashlib
+
+rows = [line.strip() for line in os.environ["ATTACKER_SPECS_BLOB"].splitlines() if line.strip()]
+attackers = []
+for row in rows:
+    provider, model = row.split("|", 1)
+    attackers.append({"provider": provider, "model": model})
+payload = {
+    "matrix_version": os.environ["MATRIX_VERSION"],
+    "attack_types": [item for item in os.environ["MATRIX_ATTACK_TYPES_CSV"].split(",") if item],
+    "retrieval_mode": "hybrid",
+    "ranking_mode": "deterministic",
+    "poison_generation_mode": "model_tied",
+    "poison_prompt_profile": "model_tied_v1",
+    "attackers": attackers,
+}
+rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:16]
+print(json.dumps(attackers, sort_keys=True))
+print(digest)
+PY
+  )"
+  local _sig_lines=()
+  mapfile -t _sig_lines <<< "${attackers_json}"
+  if (( ${#_sig_lines[@]} != 2 )); then
+    die "failed to compute matrix signature"
+  fi
+  MATRIX_ATTACKERS_JSON="${_sig_lines[0]}"
+  MATRIX_SIGNATURE="${_sig_lines[1]}"
+}
+
+validate_matrix_invariants() {
+  local combo_specs_blob
+  combo_specs_blob="$(printf '%s\n' "${COMBO_SPECS[@]}")"
+  COMBO_SPECS_BLOB="${combo_specs_blob}" \
+  ATTACKER_EXPECTED_COUNT="${ATTACKER_EXPECTED_COUNT}" \
+  MATRIX_ATTACK_TYPES_CSV="${MATRIX_ATTACK_TYPES_CSV}" \
+  python3 - <<'PY'
+import os
+
+combo_specs = [line.strip() for line in os.environ["COMBO_SPECS_BLOB"].splitlines() if line.strip()]
+expected_attackers = int(os.environ["ATTACKER_EXPECTED_COUNT"])
+expected_attacks = set([item for item in os.environ["MATRIX_ATTACK_TYPES_CSV"].split(",") if item])
+if expected_attacks != {"targeted_promotion", "prompt_injection", "untargeted_degradation"}:
+    raise SystemExit(f"attack-type invariant failed: expected fixed 3 attacks, got {sorted(expected_attacks)}")
+if len(combo_specs) != expected_attackers * len(expected_attacks):
+    raise SystemExit(
+        f"combo-count invariant failed: expected {expected_attackers * len(expected_attacks)} combos, got {len(combo_specs)}"
+    )
+
+pairs = set()
+attack_types = set()
+attackers = set()
+for spec in combo_specs:
+    parts = spec.split("|")
+    if len(parts) != 13:
+        raise SystemExit(f"malformed combo spec: {spec}")
+    (
+        attack_type,
+        _target_boost_policy,
+        _target_boost_strength,
+        retrieval_mode,
+        ranking_mode,
+        _victim_provider,
+        _victim_model,
+        _victim_tag,
+        attacker_provider,
+        attacker_model,
+        _attacker_tag,
+        _poison_fraction,
+        _pair_type,
+    ) = parts
+    attack_types.add(attack_type)
+    attackers.add((attacker_provider, attacker_model))
+    if retrieval_mode != "hybrid":
+        raise SystemExit(f"retrieval invariant failed: found retrieval_mode={retrieval_mode}")
+    if ranking_mode != "deterministic":
+        raise SystemExit(f"ranking invariant failed: found ranking_mode={ranking_mode}")
+    if ranking_mode == "llm_rerank":
+        raise SystemExit("llm_rerank is forbidden in deterministic matrix")
+    if retrieval_mode in {"lexical", "dense"}:
+        raise SystemExit("lexical/dense are forbidden in deterministic matrix")
+    pair = (attacker_provider, attacker_model, attack_type)
+    if pair in pairs:
+        raise SystemExit(f"duplicate attacker+attack pair: {pair}")
+    pairs.add(pair)
+
+if attack_types != expected_attacks:
+    raise SystemExit(
+        f"attack-type invariant failed: expected={sorted(expected_attacks)} actual={sorted(attack_types)}"
+    )
+if len(attackers) != expected_attackers:
+    raise SystemExit(
+        f"attacker-count invariant failed: expected={expected_attackers} actual={len(attackers)}"
+    )
+if len(pairs) != expected_attackers * len(expected_attacks):
+    raise SystemExit(
+        f"pair coverage invariant failed: expected={expected_attackers * len(expected_attacks)} actual={len(pairs)}"
+    )
+PY
+}
+
 resolve_attack_params_for_type() {
   local attack_type="$1"
 
@@ -924,9 +1174,13 @@ section = payload.get(attack_type)
 if not isinstance(section, dict):
     raise SystemExit(1)
 policy = str(section.get("target_boost_policy", "")).strip()
+if policy not in {"disabled", "keyword_burst", "aggressive"}:
+    raise SystemExit(1)
 strength = int(section.get("target_boost_strength"))
+if strength <= 0:
+    raise SystemExit(1)
 poison_fraction = float(section.get("poison_fraction"))
-if policy == "":
+if poison_fraction <= 0.0 or poison_fraction > 1.0:
     raise SystemExit(1)
 print(f"{policy}|{strength}|{poison_fraction}")
 PY
@@ -983,94 +1237,79 @@ except Exception:
 PY
 }
 
+sanitize_tuning_score() {
+  local raw_score="$1"
+  RAW_SCORE="${raw_score}" \
+  HARD_FAIL="${TUNING_HARD_FAIL_SCORE}" \
+  python3 - <<'PY'
+import math
+import os
+
+raw = os.environ["RAW_SCORE"].strip()
+hard_fail = float(os.environ["HARD_FAIL"])
+
+try:
+    value = float(raw)
+except Exception:
+    print(hard_fail)
+    raise SystemExit(0)
+
+if not math.isfinite(value):
+    print(hard_fail)
+    raise SystemExit(0)
+
+print(value)
+PY
+}
+
 evaluate_tuning_candidate() {
   local attack_type="$1"
   local target_boost_policy="$2"
   local target_boost_strength="$3"
   local poison_fraction="$4"
   local candidate_key="$5"
-
-  local first_victim_provider first_victim_model first_victim_tag
-  IFS='|' read -r first_victim_provider first_victim_model first_victim_tag <<< "${TUNING_VICTIM_SPECS[0]}"
+  local tuning_log="${TUNING_RUN_LOG:-${STATE_LOGS_DIR}/tuning_${RUN_ID}.log}"
 
   if ! write_combo_configs \
       "${attack_type}" \
       "${target_boost_policy}" \
       "${target_boost_strength}" \
       "hybrid" \
-      "llm_rerank" \
-      "${first_victim_provider}" \
-      "${first_victim_model}" \
-      "${FIXED_ATTACKER_PROVIDER}" \
-      "${FIXED_ATTACKER_MODEL}" \
+      "deterministic" \
+      "${STABLE_VICTIM_PROVIDER}" \
+      "${STABLE_VICTIM_MODEL}" \
+      "${STABLE_VICTIM_PROVIDER}" \
+      "${STABLE_VICTIM_MODEL}" \
       "${poison_fraction}"; then
     echo "${TUNING_HARD_FAIL_SCORE}"
     return 0
   fi
 
-  if ! env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli attack build-poisoned >/dev/null 2>&1; then
+  if ! run_tuning_step "${tuning_log}" "attack_build_poisoned_${candidate_key}" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli attack build-poisoned; then
     echo "${TUNING_HARD_FAIL_SCORE}"
     return 0
   fi
-  if ! env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli index poisoned >/dev/null 2>&1; then
+  if ! run_tuning_step "${tuning_log}" "index_poisoned_${candidate_key}" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli index poisoned; then
     echo "${TUNING_HARD_FAIL_SCORE}"
     return 0
   fi
 
-  local score_sum="0.0"
-  local victim_count=0
-  local victim_spec victim_provider victim_model victim_tag tuning_label metrics_path score
-  for victim_spec in "${TUNING_VICTIM_SPECS[@]}"; do
-    IFS='|' read -r victim_provider victim_model victim_tag <<< "${victim_spec}"
-
-    score="${TUNING_HARD_FAIL_SCORE}"
-    if write_combo_configs \
-        "${attack_type}" \
-        "${target_boost_policy}" \
-        "${target_boost_strength}" \
-        "hybrid" \
-        "llm_rerank" \
-        "${victim_provider}" \
-        "${victim_model}" \
-        "${FIXED_ATTACKER_PROVIDER}" \
-        "${FIXED_ATTACKER_MODEL}" \
-        "${poison_fraction}"; then
-      tuning_label="tune_${RUN_ID}_$(attack_tag "${attack_type}")_${candidate_key}_v${victim_tag}"
-      if env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli eval run \
-          --mode batch \
-          --batch-size "${TUNING_BATCH_SIZE}" \
-          --label "${tuning_label}" \
-          --k "${K}" \
-          --repeat-count 1 \
-          --seed "${SEED}" \
-          --results-root "${TUNING_RESULTS_ROOT}" \
-          --require-rerank-success \
-          --overwrite >/dev/null 2>&1; then
-        metrics_path="${TUNING_RESULTS_ROOT}/${tuning_label}/metrics.json"
-        score="$(tuning_score_from_metrics "${attack_type}" "${metrics_path}")"
-      fi
-    fi
-
-    score_sum="$(
-      python3 - "${score_sum}" "${score}" <<'PY'
-import sys
-a = float(sys.argv[1])
-b = float(sys.argv[2])
-print(a + b)
-PY
-    )"
-    victim_count=$((victim_count + 1))
-  done
-
-  python3 - "${score_sum}" "${victim_count}" <<'PY'
-import sys
-total = float(sys.argv[1])
-count = int(sys.argv[2])
-if count <= 0:
-    print("-1000000000.0")
-else:
-    print(total / float(count))
-PY
+  local tuning_label metrics_path score
+  score="${TUNING_HARD_FAIL_SCORE}"
+  tuning_label="tune_${RUN_ID}_$(attack_tag "${attack_type}")_${candidate_key}"
+  if run_tuning_step "${tuning_log}" "eval_run_${candidate_key}" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli eval run \
+      --mode batch \
+      --batch-size "${TUNING_BATCH_SIZE}" \
+      --label "${tuning_label}" \
+      --k "${K}" \
+      --repeat-count 1 \
+      --seed "${SEED}" \
+      --results-root "${TUNING_RESULTS_ROOT}" \
+      --overwrite; then
+    metrics_path="${TUNING_RESULTS_ROOT}/${tuning_label}/metrics.json"
+    score="$(tuning_score_from_metrics "${attack_type}" "${metrics_path}")"
+  fi
+  echo "${score}"
 }
 
 select_best_tuning_candidate() {
@@ -1078,13 +1317,14 @@ select_best_tuning_candidate() {
   local stage="$2"
   python3 - "${csv_path}" "${stage}" <<'PY'
 import csv
+import math
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 stage = sys.argv[2]
-rows = list(csv.DictReader(path.open(encoding="utf-8")))
-if not rows:
+raw_rows = list(csv.DictReader(path.open(encoding="utf-8")))
+if not raw_rows:
     raise SystemExit("no tuning rows to select from")
 
 policy_rank = {"keyword_burst": 0, "aggressive": 1, "disabled": 2}
@@ -1101,11 +1341,39 @@ def as_int(value: object, default: int) -> int:
     except Exception:
         return default
 
-def sort_key(row: dict[str, str]) -> tuple[float, float, int, int]:
-    score = as_float(row.get("mean_score"), -1_000_000_000.0)
-    poison_fraction = as_float(row.get("poison_fraction"), 1_000_000_000.0)
-    strength = as_int(row.get("strength"), 1_000_000_000)
-    policy = str(row.get("policy", "")).strip()
+rows: list[dict[str, object]] = []
+for raw in raw_rows:
+    if not isinstance(raw, dict):
+        continue
+    policy = str(raw.get("policy", "")).strip()
+    if policy not in policy_rank:
+        continue
+    strength = as_int(raw.get("strength"), 1_000_000_000)
+    poison_fraction = as_float(raw.get("poison_fraction"), 1_000_000_000.0)
+    score = as_float(raw.get("mean_score"), -1_000_000_000.0)
+    if strength <= 0:
+        continue
+    if not math.isfinite(poison_fraction) or poison_fraction <= 0.0 or poison_fraction > 1.0:
+        continue
+    if not math.isfinite(score):
+        continue
+    rows.append(
+        {
+            "policy": policy,
+            "strength": strength,
+            "poison_fraction": poison_fraction,
+            "mean_score": score,
+        }
+    )
+
+if not rows:
+    raise SystemExit("no valid tuning rows after filtering malformed/non-numeric entries")
+
+def sort_key(row: dict[str, object]) -> tuple[float, float, int, int]:
+    score = float(row["mean_score"])
+    poison_fraction = float(row["poison_fraction"])
+    strength = int(row["strength"])
+    policy = str(row["policy"])
     p_rank = policy_rank.get(policy, 99)
 
     if stage == "targeted_stage1":
@@ -1115,25 +1383,78 @@ def sort_key(row: dict[str, str]) -> tuple[float, float, int, int]:
     return (-score, poison_fraction, float(strength), p_rank)
 
 best = min(rows, key=sort_key)
-policy = str(best.get("policy", "")).strip()
-strength = as_int(best.get("strength"), 1)
-poison_fraction = as_float(best.get("poison_fraction"), 0.2)
-score = as_float(best.get("mean_score"), -1_000_000_000.0)
-if policy == "":
-    raise SystemExit("selected candidate has empty policy")
+policy = str(best["policy"])
+strength = int(best["strength"])
+poison_fraction = float(best["poison_fraction"])
+score = float(best["mean_score"])
 print(f"{policy}|{strength}|{poison_fraction}|{score}")
 PY
 }
 
-tune_attack_params_for_profile() {
-  mkdir -p "${TUNING_RESULTS_ROOT}"
-  rm -f "${STATE_DIR}/tuning_targeted_stage1.csv" \
+purge_tuning_artifacts() {
+  rm -f "${BEST_ATTACK_PARAMS_JSON}" \
+        "${STATE_DIR}/tuning_targeted_stage1.csv" \
         "${STATE_DIR}/tuning_targeted_stage2.csv" \
         "${STATE_DIR}/tuning_prompt_injection.csv" \
         "${STATE_DIR}/tuning_untargeted.csv"
+}
 
-  log "tuning_start profile=${PROFILE} results_root=${TUNING_RESULTS_ROOT} batch_size=${TUNING_BATCH_SIZE}"
-  if ! env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli index baseline >/dev/null 2>&1; then
+validate_best_attack_params_cache() {
+  local cache_path="$1"
+  BEST_ATTACK_PARAMS_PATH="${cache_path}" python3 - <<'PY'
+import json
+import math
+import os
+from pathlib import Path
+
+path = Path(os.environ["BEST_ATTACK_PARAMS_PATH"])
+if not path.exists() or path.stat().st_size == 0:
+    raise SystemExit("cache file missing or empty")
+
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    raise SystemExit(f"invalid json: {exc}") from exc
+
+if not isinstance(payload, dict):
+    raise SystemExit("cache payload must be a JSON object")
+
+required = ("targeted_promotion", "prompt_injection", "untargeted_degradation")
+valid_policies = {"disabled", "keyword_burst", "aggressive"}
+
+for attack_type in required:
+    section = payload.get(attack_type)
+    if not isinstance(section, dict):
+        raise SystemExit(f"missing section: {attack_type}")
+
+    policy = str(section.get("target_boost_policy", "")).strip()
+    if policy not in valid_policies:
+        raise SystemExit(f"{attack_type}.target_boost_policy invalid: {policy!r}")
+
+    try:
+        strength = int(section.get("target_boost_strength"))
+    except Exception as exc:
+        raise SystemExit(f"{attack_type}.target_boost_strength invalid: {exc}") from exc
+    if strength <= 0:
+        raise SystemExit(f"{attack_type}.target_boost_strength must be > 0")
+
+    try:
+        poison_fraction = float(section.get("poison_fraction"))
+    except Exception as exc:
+        raise SystemExit(f"{attack_type}.poison_fraction invalid: {exc}") from exc
+    if not math.isfinite(poison_fraction) or poison_fraction <= 0.0 or poison_fraction > 1.0:
+        raise SystemExit(f"{attack_type}.poison_fraction out of range: {poison_fraction}")
+PY
+}
+
+tune_attack_params() {
+  mkdir -p "${TUNING_RESULTS_ROOT}"
+  TUNING_RUN_LOG="${STATE_LOGS_DIR}/tuning_${RUN_ID}.log"
+  : > "${TUNING_RUN_LOG}"
+  purge_tuning_artifacts
+
+  log "tuning_start matrix=${MATRIX_VERSION} results_root=${TUNING_RESULTS_ROOT} batch_size=${TUNING_BATCH_SIZE} retrieval_mode=hybrid ranking_mode=deterministic tuning_log=${TUNING_RUN_LOG}"
+  if ! run_tuning_step "${TUNING_RUN_LOG}" "index_baseline" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli index baseline; then
     die "tuning failed: baseline indexing failed"
   fi
 
@@ -1148,6 +1469,7 @@ tune_attack_params_for_profile() {
     for strength in "${TUNING_TARGET_STRENGTHS[@]}"; do
       candidate_key="tgt1_${policy}_s${strength}_p0p2"
       mean_score="$(evaluate_tuning_candidate "targeted_promotion" "${policy}" "${strength}" "0.2" "${candidate_key}")"
+      mean_score="$(sanitize_tuning_score "${mean_score}")"
       printf '%s,%s,%s,%s\n' "${policy}" "${strength}" "0.2" "${mean_score}" >> "${targeted_stage1_csv}"
       log "tuning_targeted_stage1 policy=${policy} strength=${strength} poison_fraction=0.2 mean_score=${mean_score}"
     done
@@ -1162,6 +1484,7 @@ tune_attack_params_for_profile() {
   for poison_fraction in "${TUNING_POISON_FRACTIONS[@]}"; do
     candidate_key="tgt2_${targeted_policy}_s${targeted_strength}_p${poison_fraction//./p}"
     mean_score="$(evaluate_tuning_candidate "targeted_promotion" "${targeted_policy}" "${targeted_strength}" "${poison_fraction}" "${candidate_key}")"
+    mean_score="$(sanitize_tuning_score "${mean_score}")"
     printf '%s,%s,%s,%s\n' "${targeted_policy}" "${targeted_strength}" "${poison_fraction}" "${mean_score}" >> "${targeted_stage2_csv}"
     log "tuning_targeted_stage2 policy=${targeted_policy} strength=${targeted_strength} poison_fraction=${poison_fraction} mean_score=${mean_score}"
   done
@@ -1176,6 +1499,7 @@ tune_attack_params_for_profile() {
   for poison_fraction in "${TUNING_POISON_FRACTIONS[@]}"; do
     candidate_key="pinj_${prompt_policy}_s${prompt_strength}_p${poison_fraction//./p}"
     mean_score="$(evaluate_tuning_candidate "prompt_injection" "${prompt_policy}" "${prompt_strength}" "${poison_fraction}" "${candidate_key}")"
+    mean_score="$(sanitize_tuning_score "${mean_score}")"
     printf '%s,%s,%s,%s\n' "${prompt_policy}" "${prompt_strength}" "${poison_fraction}" "${mean_score}" >> "${prompt_csv}"
     log "tuning_prompt_injection poison_fraction=${poison_fraction} mean_score=${mean_score}"
   done
@@ -1189,6 +1513,7 @@ tune_attack_params_for_profile() {
   for poison_fraction in "${TUNING_POISON_FRACTIONS[@]}"; do
     candidate_key="udeg_${untargeted_policy}_s${untargeted_strength}_p${poison_fraction//./p}"
     mean_score="$(evaluate_tuning_candidate "untargeted_degradation" "${untargeted_policy}" "${untargeted_strength}" "${poison_fraction}" "${candidate_key}")"
+    mean_score="$(sanitize_tuning_score "${mean_score}")"
     printf '%s,%s,%s,%s\n' "${untargeted_policy}" "${untargeted_strength}" "${poison_fraction}" "${mean_score}" >> "${untargeted_csv}"
     log "tuning_untargeted poison_fraction=${poison_fraction} mean_score=${mean_score}"
   done
@@ -1254,116 +1579,56 @@ PY
   log "tuned_untargeted policy=${untargeted_policy} strength=${untargeted_strength} poison_fraction=${untargeted_poison} score=${untargeted_score}"
 }
 
-ensure_profile_tuning() {
-  if [[ "${PROFILE}" != "${PROFILE_GPT_FIXED_ATTACKER}" ]]; then
-    return
-  fi
+ensure_tuning() {
+  local cache_validation_message
   if [[ "${DRY_RUN}" == "true" ]]; then
+    if [[ -f "${BEST_ATTACK_PARAMS_JSON}" && -s "${BEST_ATTACK_PARAMS_JSON}" && "${FORCE_RETUNE}" != "true" ]]; then
+      if cache_validation_message="$(validate_best_attack_params_cache "${BEST_ATTACK_PARAMS_JSON}" 2>&1)"; then
+        TUNING_PLAN_STATUS="dry_run_would_reuse_cached"
+      else
+        TUNING_PLAN_STATUS="dry_run_would_retune_invalid_cache"
+      fi
+    else
+      TUNING_PLAN_STATUS="dry_run_would_retune"
+    fi
     return
   fi
-  if [[ "${RESUME}" == "true" && -f "${BEST_ATTACK_PARAMS_JSON}" && -s "${BEST_ATTACK_PARAMS_JSON}" ]]; then
-    log "reuse_tuned_params file=${BEST_ATTACK_PARAMS_JSON}"
+  if [[ -f "${BEST_ATTACK_PARAMS_JSON}" && -s "${BEST_ATTACK_PARAMS_JSON}" && "${FORCE_RETUNE}" != "true" ]]; then
+    if cache_validation_message="$(validate_best_attack_params_cache "${BEST_ATTACK_PARAMS_JSON}" 2>&1)"; then
+      TUNING_PLAN_STATUS="reuse_cached"
+      log "reuse_tuned_params file=${BEST_ATTACK_PARAMS_JSON}"
+      return
+    fi
+    log "invalid_tuned_params_cache file=${BEST_ATTACK_PARAMS_JSON} details=${cache_validation_message//$'\n'/ ; }"
+    purge_tuning_artifacts
+    TUNING_PLAN_STATUS="retune_invalid_cache"
+    tune_attack_params
     return
   fi
-  rm -f "${BEST_ATTACK_PARAMS_JSON}"
-  tune_attack_params_for_profile
+  TUNING_PLAN_STATUS="retune"
+  purge_tuning_artifacts
+  tune_attack_params
 }
 
 load_matrix() {
   COMBO_SPECS=()
-
-  if [[ "${PROFILE}" == "${PROFILE_FULL_MATRIX}" ]]; then
-    local attack_types target_boost_policies retrieval_modes ranking_modes poison_fractions model_specs
-    attack_types=("targeted_promotion" "untargeted_degradation" "prompt_injection")
-    target_boost_policies=("disabled" "keyword_burst" "aggressive")
-    retrieval_modes=("lexical" "dense" "hybrid")
-    ranking_modes=("deterministic" "llm_rerank")
-    poison_fractions=("0.2")
-    model_specs=(
-      "chatgpt|gpt-5.4|gpt54"
-      "claude|claude-sonnet-4-6|cls46"
-      "gemini|[次]gemini-3.1-pro-preview|ge31p"
-      "qwen|qwen-3.5-plus|qw35p"
-      "deepseek|deepseek-v4-pro|dsv4p"
-    )
-
-    local attack_type target_boost_policy target_boost_strength retrieval_mode ranking_mode poison_fraction victim_spec attacker_spec
-    local victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag
-    target_boost_strength="${TUNING_DEFAULT_STRENGTH}"
-    for attack_type in "${attack_types[@]}"; do
-      for target_boost_policy in "${target_boost_policies[@]}"; do
-        for retrieval_mode in "${retrieval_modes[@]}"; do
-          for ranking_mode in "${ranking_modes[@]}"; do
-            for poison_fraction in "${poison_fractions[@]}"; do
-              for victim_spec in "${model_specs[@]}"; do
-                IFS='|' read -r victim_provider victim_model victim_tag <<< "${victim_spec}"
-                for attacker_spec in "${model_specs[@]}"; do
-                  IFS='|' read -r attacker_provider attacker_model attacker_tag <<< "${attacker_spec}"
-                  COMBO_SPECS+=(
-                    "${attack_type}|${target_boost_policy}|${target_boost_strength}|${retrieval_mode}|${ranking_mode}|${victim_provider}|${victim_model}|${victim_tag}|${attacker_provider}|${attacker_model}|${attacker_tag}|${poison_fraction}|full"
-                  )
-                done
-              done
-            done
-          done
-        done
-      done
-    done
-  elif [[ "${PROFILE}" == "${PROFILE_FORTY_MIXED}" ]]; then
-    local attack_types
-    attack_types=("targeted_promotion" "untargeted_degradation")
-
-    local cross_pairs pair_spec
-    cross_pairs=(
-      "chatgpt|gpt-5.4|gpt54|claude|claude-sonnet-4-6|cls46"
-      "claude|claude-sonnet-4-6|cls46|gemini|[次]gemini-3.1-pro-preview|ge31p"
-      "gemini|[次]gemini-3.1-pro-preview|ge31p|qwen|qwen-3.5-plus|qw35p"
-      "qwen|qwen-3.5-plus|qw35p|deepseek|deepseek-v4-pro|dsv4p"
-      "deepseek|deepseek-v4-pro|dsv4p|chatgpt|gpt-5.4|gpt54"
-      "chatgpt|gpt-5.4|gpt54|gemini|[次]gemini-3.1-pro-preview|ge31p"
-      "gemini|[次]gemini-3.1-pro-preview|ge31p|deepseek|deepseek-v4-pro|dsv4p"
-      "deepseek|deepseek-v4-pro|dsv4p|claude|claude-sonnet-4-6|cls46"
-      "claude|claude-sonnet-4-6|cls46|qwen|qwen-3.5-plus|qw35p"
-      "qwen|qwen-3.5-plus|qw35p|chatgpt|gpt-5.4|gpt54"
-    )
-
-    local attack_type target_boost_strength victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag
-    target_boost_strength="${TUNING_DEFAULT_STRENGTH}"
-    for pair_spec in "${cross_pairs[@]}"; do
-      IFS='|' read -r victim_provider victim_model victim_tag attacker_provider attacker_model attacker_tag <<< "${pair_spec}"
-      for attack_type in "${attack_types[@]}"; do
-        COMBO_SPECS+=(
-          "${attack_type}|keyword_burst|${target_boost_strength}|hybrid|llm_rerank|${victim_provider}|${victim_model}|${victim_tag}|${attacker_provider}|${attacker_model}|${attacker_tag}|0.2|cross20"
-        )
-      done
-    done
-  else
-    local attack_types
-    attack_types=("targeted_promotion" "prompt_injection" "untargeted_degradation")
-    local victim_specs
-    victim_specs=(
-      "chatgpt|gpt-5.4|gpt54"
-      "claude|claude-sonnet-4-6|cls46"
-      "qwen|qwen-3.5-plus|qw35p"
-      "deepseek|deepseek-v4-pro|dsv4p"
-    )
-
-    local attack_type victim_spec victim_provider victim_model victim_tag
-    local target_boost_policy target_boost_strength poison_fraction tuned
+  local attack_types
+  attack_types=("targeted_promotion" "prompt_injection" "untargeted_degradation")
+  local attack_type attacker_spec attacker_provider attacker_model attacker_tag tuned
+  local target_boost_policy target_boost_strength poison_fraction
+  for attacker_spec in "${ATTACKER_SPECS[@]}"; do
+    IFS='|' read -r attacker_provider attacker_model <<< "${attacker_spec}"
+    attacker_tag="$(attacker_tag_from_model "${attacker_provider}" "${attacker_model}")"
     for attack_type in "${attack_types[@]}"; do
       tuned="$(resolve_attack_params_for_type "${attack_type}")"
       IFS='|' read -r target_boost_policy target_boost_strength poison_fraction <<< "${tuned}"
-
-      for victim_spec in "${victim_specs[@]}"; do
-        IFS='|' read -r victim_provider victim_model victim_tag <<< "${victim_spec}"
-        COMBO_SPECS+=(
-          "${attack_type}|${target_boost_policy}|${target_boost_strength}|hybrid|llm_rerank|${victim_provider}|${victim_model}|${victim_tag}|${FIXED_ATTACKER_PROVIDER}|${FIXED_ATTACKER_MODEL}|${FIXED_ATTACKER_TAG}|${poison_fraction}|gptfix12"
-        )
-      done
+      COMBO_SPECS+=(
+        "${attack_type}|${target_boost_policy}|${target_boost_strength}|hybrid|deterministic|${STABLE_VICTIM_PROVIDER}|${STABLE_VICTIM_MODEL}|${STABLE_VICTIM_TAG}|${attacker_provider}|${attacker_model}|${attacker_tag}|${poison_fraction}|det_hyb_attacker5x3"
+      )
     done
-  fi
-
+  done
   TOTAL_COMBOS="${#COMBO_SPECS[@]}"
+  validate_matrix_invariants
 }
 
 run_combo() {
@@ -1390,19 +1655,23 @@ run_combo() {
   poison_tag="${poison_fraction//./p}"
   combo_key="${RUN_ID}|${combo_index}|${attack_type}|${target_boost_policy}|${target_boost_strength}|${retrieval_mode}|${ranking_mode}|${victim_provider}|${victim_model}|${attacker_provider}|${attacker_model}|${poison_fraction}|${pair_type}"
   combo_hash="$(short_hash "${combo_key}")"
-  label="full_${RUN_ID}_$(printf '%05d' "${combo_index}")_${a_tag}_${b_tag}_${r_tag}_${k_tag}_v${victim_tag}_a${attacker_tag}_p${poison_tag}_${pair_type}_${combo_hash}"
+  label="det_hyb_${a_tag}_${attacker_tag}_p${poison_tag}_$(printf '%02d' "${combo_index}")_${combo_hash}"
   run_dir="${RESULTS_ROOT}/${label}"
   mkdir -p "${run_dir}"
-  run_log="${run_dir}/run.log"
+  run_log="${STATE_LOGS_DIR}/${label}.log"
+  ln -sfn "${REPO_ROOT}/${run_log}" "${run_dir}/run.log"
 
   {
+    echo
+    echo "[$(timestamp_utc)] ===== combo_attempt_start ====="
     echo "[$(timestamp_utc)] run_id=${RUN_ID}"
     echo "[$(timestamp_utc)] combo_index=${combo_index}/${TOTAL_COMBOS}"
     echo "[$(timestamp_utc)] label=${label}"
     echo "[$(timestamp_utc)] attack_type=${attack_type} target_boost_policy=${target_boost_policy} target_boost_strength=${target_boost_strength} poison_fraction=${poison_fraction}"
     echo "[$(timestamp_utc)] retrieval_mode=${retrieval_mode} ranking_mode=${ranking_mode}"
+    echo "[$(timestamp_utc)] poison_generation_mode=model_tied poison_generator=${attacker_provider}:${attacker_model} poison_prompt_profile=model_tied_v1"
     echo "[$(timestamp_utc)] pair_type=${pair_type} victim=${victim_provider}:${victim_model} attacker=${attacker_provider}:${attacker_model}"
-  } >> "${run_log}"
+  } | tee -a "${run_log}"
 
   if ! write_combo_configs \
       "${attack_type}" \
@@ -1421,7 +1690,7 @@ run_combo() {
       "${combo_index}" "${label}" "failed" "write_config" "${error_message}" \
       "${attack_type}" "${target_boost_policy}" "${retrieval_mode}" "${ranking_mode}" \
       "${victim_provider}" "${victim_model}" "${attacker_provider}" "${attacker_model}" "${pair_type}" "${poison_fraction}" \
-      "${run_dir}"
+      "${run_dir}" "${run_log}"
     write_progress "failed" "${combo_index}" "${label}" "write_config" "${error_message}"
     return 1
   fi
@@ -1461,9 +1730,6 @@ run_combo() {
       "${RESULTS_ROOT}"
       --overwrite
     )
-    if [[ "${ranking_mode}" == "llm_rerank" ]]; then
-      eval_cmd+=(--require-rerank-success)
-    fi
     if ! run_step "${run_log}" "eval_run" "${combo_index}" "${label}" "${eval_cmd[@]}"; then
       failed_step="eval_run"
     elif ! run_step "${run_log}" "report_generate" "${combo_index}" "${label}" env ELASTICSEARCH_URL="${ES_URL}" uv run --project api python -m api.app.cli.cli report generate --label "${label}" --results-root "${RESULTS_ROOT}"; then
@@ -1479,7 +1745,7 @@ run_combo() {
       "${combo_index}" "${label}" "failed" "${failed_step}" "${error_message}" \
       "${attack_type}" "${target_boost_policy}" "${retrieval_mode}" "${ranking_mode}" \
       "${victim_provider}" "${victim_model}" "${attacker_provider}" "${attacker_model}" "${pair_type}" "${poison_fraction}" \
-      "${run_dir}"
+      "${run_dir}" "${run_log}"
     write_progress "failed" "${combo_index}" "${label}" "${failed_step}" "${error_message}"
     return 1
   fi
@@ -1488,7 +1754,7 @@ run_combo() {
     "${combo_index}" "${label}" "success" "" "" \
     "${attack_type}" "${target_boost_policy}" "${retrieval_mode}" "${ranking_mode}" \
     "${victim_provider}" "${victim_model}" "${attacker_provider}" "${attacker_model}" "${pair_type}" "${poison_fraction}" \
-    "${run_dir}"
+    "${run_dir}" "${run_log}"
   COMPLETED_INDEX["${combo_index}"]=1
   write_progress "running" "${combo_index}" "${label}" "completed" "combo completed"
   return 0
@@ -1497,28 +1763,43 @@ run_combo() {
 main() {
   parse_args "$@"
   validate_args
+  load_attackers_from_yaml
+  resolve_stable_victim_from_attackers
+  build_matrix_signature
   init_paths
   load_or_initialize_session
   backup_configs
   trap cleanup EXIT INT TERM
-  ensure_profile_tuning
+  ensure_tuning
   load_matrix
   load_completed_index_lookup
 
   log "repo_root=${REPO_ROOT}"
   log "es_url=${ES_URL}"
   log "results_root=${RESULTS_ROOT}"
-  log "profile=${PROFILE}"
+  log "profile=${PROFILE} (deterministic matrix only)"
+  log "matrix_version=${MATRIX_VERSION} matrix_signature=${MATRIX_SIGNATURE}"
   log "run_id=${RUN_ID}"
   log "k=${K} repeat_count=${REPEAT_COUNT} seed=${SEED}"
+  log "eval_mode=${EVAL_MODE} (full users; corpus indices movies/movies_poisoned)"
+  log "retrieval_mode=hybrid ranking_mode=deterministic poison_generation_mode=model_tied"
+  log "attack_types=${MATRIX_ATTACK_TYPES_CSV}"
+  log "attacker_count=${#ATTACKER_SPECS[@]} expected=${ATTACKER_EXPECTED_COUNT}"
+  local attacker_spec attacker_provider attacker_model attacker_tag
+  local attacker_row=0
+  for attacker_spec in "${ATTACKER_SPECS[@]}"; do
+    IFS='|' read -r attacker_provider attacker_model <<< "${attacker_spec}"
+    attacker_tag="$(attacker_tag_from_model "${attacker_provider}" "${attacker_model}")"
+    log "attacker[$((attacker_row + 1))]=${attacker_provider}:${attacker_model} tag=${attacker_tag}"
+    attacker_row=$((attacker_row + 1))
+  done
   log "total_combos=${TOTAL_COMBOS}"
-  if [[ "${PROFILE}" == "${PROFILE_GPT_FIXED_ATTACKER}" ]]; then
-    if [[ -f "${BEST_ATTACK_PARAMS_JSON}" && -s "${BEST_ATTACK_PARAMS_JSON}" ]]; then
-      log "best_attack_params_json=${BEST_ATTACK_PARAMS_JSON}"
-    else
-      log "best_attack_params_json=not_found_using_defaults_for_dry_run"
-    fi
+  if [[ -f "${BEST_ATTACK_PARAMS_JSON}" && -s "${BEST_ATTACK_PARAMS_JSON}" ]]; then
+    log "best_attack_params_json=${BEST_ATTACK_PARAMS_JSON}"
+  else
+    log "best_attack_params_json=missing (defaults will be used until tuning writes cache)"
   fi
+  log "tuning_plan_status=${TUNING_PLAN_STATUS}"
 
   if [[ "${DRY_RUN}" == "true" ]]; then
     local planned
@@ -1528,6 +1809,28 @@ main() {
       planned=$(( TOTAL_COMBOS - START_INDEX ))
     fi
     log "dry_run=true start_index=${START_INDEX} planned_runs=${planned}"
+    local preview_index=0
+    local preview_attack_type preview_target_boost_policy preview_target_boost_strength preview_retrieval_mode preview_ranking_mode
+    local preview_victim_provider preview_victim_model preview_victim_tag preview_attacker_provider preview_attacker_model preview_attacker_tag
+    local preview_poison_fraction preview_pair_type preview_spec
+    for ((preview_index=0; preview_index<TOTAL_COMBOS; preview_index++)); do
+      preview_spec="${COMBO_SPECS[$preview_index]}"
+      IFS='|' read -r \
+        preview_attack_type \
+        preview_target_boost_policy \
+        preview_target_boost_strength \
+        preview_retrieval_mode \
+        preview_ranking_mode \
+        preview_victim_provider \
+        preview_victim_model \
+        preview_victim_tag \
+        preview_attacker_provider \
+        preview_attacker_model \
+        preview_attacker_tag \
+        preview_poison_fraction \
+        preview_pair_type <<< "${preview_spec}"
+      log "matrix_row idx=${preview_index} attack_type=${preview_attack_type} attacker_provider=${preview_attacker_provider} attacker_model=${preview_attacker_model} attacker_tag=${preview_attacker_tag} retrieval_mode=${preview_retrieval_mode} ranking_mode=${preview_ranking_mode} poison_fraction=${preview_poison_fraction}"
+    done
     write_progress "dry_run" "${START_INDEX}" "" "" "dry run only"
     exit 0
   fi

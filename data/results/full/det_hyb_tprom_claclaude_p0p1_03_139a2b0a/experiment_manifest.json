@@ -1,0 +1,87 @@
+{
+  "attack_config_path": "/home/infiniflow/Rag-Poison-Lab/data/config/attack_config.json",
+  "attack_config_sha256": "6f284004d7ae0e21a999399f1c7e40402551d03514fbfa3f46560cea80ef5956",
+  "defense_config_path": "/home/infiniflow/Rag-Poison-Lab/data/config/defense_config.json",
+  "defense_config_sha256": null,
+  "evaluated_users": 943,
+  "generated_at_utc": "2026-05-08T23:26:35.054265+00:00",
+  "index_provenance": {
+    "movies": {
+      "logical_index": "movies",
+      "physical_index": "movies__20260508171802_703a4ecd5bac",
+      "provenance": {
+        "bulk_sha256": "703a4ecd5bac98c162483dfa9c741917274faf88aa40e75889c89259e5f4a80d",
+        "indexed_at_utc": "2026-05-08T17:18:02.954046+00:00",
+        "logical_index": "movies",
+        "mapping_sha256": "7d30a0a5b9740be0c01d9c8b4f0040e2b242be7233650d397e7e106ce9816e4b",
+        "physical_index": "movies__20260508171802_703a4ecd5bac"
+      }
+    },
+    "movies_poisoned": {
+      "logical_index": "movies_poisoned",
+      "physical_index": "movies_poisoned__20260508171814_211e3af3220b",
+      "provenance": {
+        "attack_config_sha256": "6f284004d7ae0e21a999399f1c7e40402551d03514fbfa3f46560cea80ef5956",
+        "attack_type": "targeted_promotion",
+        "bulk_sha256": "211e3af3220b8517ce947019eb100a7a728c26f337eef32863415e289515edfc",
+        "generated_at_utc": "2026-05-08T17:18:13.965759+00:00",
+        "generation_config_sha256": "e813b8b7dcc7278261d1a523d07a39a6b8089eea8e64f570e61cd29b9e4ec9cd",
+        "indexed_at_utc": "2026-05-08T17:18:14.960890+00:00",
+        "logical_index": "movies_poisoned",
+        "mapping_sha256": "7d30a0a5b9740be0c01d9c8b4f0040e2b242be7233650d397e7e106ce9816e4b",
+        "output_bulk_sha256": "211e3af3220b8517ce947019eb100a7a728c26f337eef32863415e289515edfc",
+        "physical_index": "movies_poisoned__20260508171814_211e3af3220b",
+        "poison_cache_policy": "reuse",
+        "poison_fraction": 0.1,
+        "poison_generation_mode": "model_tied",
+        "poison_generation_seed": 42,
+        "poison_generation_stats": {
+          "mode": "model_tied",
+          "model": "claude-sonnet-4-6",
+          "prompt_profile": "model_tied_v1",
+          "provider": "claude",
+          "requests_failed": 1,
+          "requests_succeeded": 0,
+          "requests_total": 1
+        },
+        "poison_generator_model": "claude-sonnet-4-6",
+        "poison_generator_provider": "claude",
+        "poison_max_tokens": 256,
+        "poison_prompt_profile": "model_tied_v1",
+        "poison_temperature": 0.0,
+        "poisoned_bulk_meta_path": "/home/infiniflow/Rag-Poison-Lab/data/processed/es_bulk_poisoned_movies.meta.json",
+        "poisoned_docs": 168,
+        "source_bulk_sha256": "703a4ecd5bac98c162483dfa9c741917274faf88aa40e75889c89259e5f4a80d",
+        "target_movie_id": 1666,
+        "total_docs": 1682
+      }
+    }
+  },
+  "k": 10,
+  "label": "det_hyb_tprom_claclaude_p0p1_03_139a2b0a",
+  "llm_config": {
+    "attacker": {
+      "model": "claude-sonnet-4-6",
+      "provider": "claude"
+    },
+    "ranking_mode": "deterministic",
+    "retrieval_mode": "hybrid",
+    "victim": {
+      "model": "gpt-5.4",
+      "provider": "chatgpt"
+    }
+  },
+  "metrics_path": "/home/infiniflow/Rag-Poison-Lab/data/results/full/det_hyb_tprom_claclaude_p0p1_03_139a2b0a/metrics.json",
+  "mode": "full",
+  "repeat_count": 1,
+  "requested_users": 943,
+  "require_rerank_success": false,
+  "rerank_uses_victim_only": false,
+  "runtime_snapshot_paths": {
+    "attack_config_runtime_path": "/home/infiniflow/Rag-Poison-Lab/data/results/full/det_hyb_tprom_claclaude_p0p1_03_139a2b0a/attack_config.runtime.json",
+    "defense_config_runtime_path": "/home/infiniflow/Rag-Poison-Lab/data/results/full/det_hyb_tprom_claclaude_p0p1_03_139a2b0a/defense_config.runtime.json",
+    "llm_config_runtime_path": "/home/infiniflow/Rag-Poison-Lab/data/results/full/det_hyb_tprom_claclaude_p0p1_03_139a2b0a/llm_config.runtime.json"
+  },
+  "seed": 42,
+  "skipped_users": 0
+}

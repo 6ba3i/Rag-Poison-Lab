@@ -1,0 +1,10 @@
+policy,strength,poison_fraction,mean_score
+disabled,2,0.2,0.0
+disabled,4,0.2,0.0
+disabled,6,0.2,0.0
+keyword_burst,2,0.2,0.29
+keyword_burst,4,0.2,0.26
+keyword_burst,6,0.2,0.26
+aggressive,2,0.2,0.26
+aggressive,4,0.2,0.26
+aggressive,6,0.2,0.26

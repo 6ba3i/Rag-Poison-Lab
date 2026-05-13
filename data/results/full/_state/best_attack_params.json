@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "run_id": "20260507_014429",
+    "tuned_at_utc": "2026-05-07T10:33:36.202642+00:00",
+    "tuning_batch_size": 100
+  },
+  "prompt_injection": {
+    "mean_score": 0.0,
+    "objective": "delta_asr",
+    "poison_fraction": 0.1,
+    "target_boost_policy": "disabled",
+    "target_boost_strength": 1
+  },
+  "targeted_promotion": {
+    "mean_score": 0.29,
+    "objective": "delta_asr",
+    "poison_fraction": 0.1,
+    "target_boost_policy": "keyword_burst",
+    "target_boost_strength": 2
+  },
+  "untargeted_degradation": {
+    "mean_score": 0.012506,
+    "objective": "neg_delta_ndcg",
+    "poison_fraction": 0.3,
+    "target_boost_policy": "disabled",
+    "target_boost_strength": 1
+  }
+}

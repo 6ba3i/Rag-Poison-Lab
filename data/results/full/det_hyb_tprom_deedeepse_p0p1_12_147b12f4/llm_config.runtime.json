@@ -1,0 +1,12 @@
+{
+  "attacker": {
+    "model": "deepseek-v4-pro",
+    "provider": "deepseek"
+  },
+  "ranking_mode": "deterministic",
+  "retrieval_mode": "hybrid",
+  "victim": {
+    "model": "gpt-5.4",
+    "provider": "chatgpt"
+  }
+}

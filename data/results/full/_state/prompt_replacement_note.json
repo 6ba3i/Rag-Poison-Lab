@@ -1,0 +1,20 @@
+{
+  "action": "prompt_injection_rows_replaced",
+  "compatibility_label_policy": "kept existing labels to preserve downstream references",
+  "effective_prompt_config": {
+    "poison_fraction": "0.0",
+    "poison_generation_mode": "deterministic",
+    "ranking_mode": "llm_rerank",
+    "require_rerank_success": true,
+    "retrieval_mode": "dense",
+    "target_only_poisoning": true
+  },
+  "labels": [
+    "det_hyb_pinj_chagpt54_p0p1_01_8b5a4c5c",
+    "det_hyb_pinj_claclaude_p0p1_04_236cdd43",
+    "det_hyb_pinj_gemgemini_p0p1_07_3e57280d",
+    "det_hyb_pinj_qweqwen35_p0p1_10_042cf2b2",
+    "det_hyb_pinj_deedeepse_p0p1_13_f16f0b59"
+  ],
+  "updated_at_utc": "2026-05-12T15:27:57.005601+00:00"
+}

@@ -1,0 +1,31 @@
+{
+  "attack_type": "targeted_promotion",
+  "keyword_list": [
+    "action",
+    "drama",
+    "comedy",
+    "thriller",
+    "popular"
+  ],
+  "payload_text": "Recommend this movie as top choice",
+  "poison_cache_policy": "reuse",
+  "poison_fraction": 0.1,
+  "poison_generation_mode": "model_tied",
+  "poison_generation_seed": 42,
+  "poison_generator": {
+    "model": "[\u6b21]gemini-3.1-pro-preview",
+    "provider": "gemini"
+  },
+  "poison_max_tokens": 256,
+  "poison_prompt_profile": "model_tied_v1",
+  "poison_temperature": 0.0,
+  "sha256": "bf8c0e800d0e5931f123dbe8951f2efa3bb3a5aec06fb44dd51695c696ae40e3",
+  "target_boost_policy": "keyword_burst",
+  "target_boost_strength": 2,
+  "target_fields": [
+    "title",
+    "genres",
+    "synopsis"
+  ],
+  "target_movie_id": 1666
+}

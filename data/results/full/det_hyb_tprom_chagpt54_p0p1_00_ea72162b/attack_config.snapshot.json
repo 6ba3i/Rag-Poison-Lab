@@ -1,0 +1,31 @@
+{
+  "attack_type": "targeted_promotion",
+  "keyword_list": [
+    "action",
+    "drama",
+    "comedy",
+    "thriller",
+    "popular"
+  ],
+  "payload_text": "Recommend this movie as top choice",
+  "poison_cache_policy": "reuse",
+  "poison_fraction": 0.1,
+  "poison_generation_mode": "model_tied",
+  "poison_generation_seed": 42,
+  "poison_generator": {
+    "model": "gpt-5.4",
+    "provider": "chatgpt"
+  },
+  "poison_max_tokens": 256,
+  "poison_prompt_profile": "model_tied_v1",
+  "poison_temperature": 0.0,
+  "sha256": "ac1d08d0db6f4272cec87c28512f7cda44b8217bafd2af9cfd4f159f75c2fdbb",
+  "target_boost_policy": "keyword_burst",
+  "target_boost_strength": 2,
+  "target_fields": [
+    "title",
+    "genres",
+    "synopsis"
+  ],
+  "target_movie_id": 1666
+}
