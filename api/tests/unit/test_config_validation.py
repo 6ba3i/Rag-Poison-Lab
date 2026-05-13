@@ -125,6 +125,13 @@ def test_attack_config_normalizes_payload_and_keywords() -> None:
     assert config.target_boost_policy == "keyword_burst"
     assert config.target_boost_strength == 3
     assert config.target_fields == ["title", "synopsis"]
+    assert config.poison_generation_mode == "deterministic"
+    assert config.poison_generator is None
+    assert config.poison_prompt_profile == "model_tied_v1"
+    assert config.poison_generation_seed == 42
+    assert config.poison_temperature == 0.0
+    assert config.poison_max_tokens == 256
+    assert config.poison_cache_policy == "reuse"
 
 
 def test_attack_config_rejects_invalid_bounds() -> None:
@@ -140,12 +147,17 @@ def test_attack_config_rejects_invalid_bounds() -> None:
     with pytest.raises(ValidationError):
         AttackConfig.model_validate({"target_fields": ["title", "invalid_field"]})
 
+    with pytest.raises(ValidationError):
+        AttackConfig.model_validate({"poison_generation_mode": "model_tied", "poison_generator": None})
+
 
 def test_attack_config_target_boost_defaults() -> None:
     config = default_attack_config()
     assert config.target_boost_policy == "keyword_burst"
     assert config.target_boost_strength == 4
     assert config.target_fields == ["title", "genres", "synopsis"]
+    assert config.poison_generation_mode == "deterministic"
+    assert config.poison_generator is None
 
 
 def test_load_attack_config_missing_and_empty_return_default(tmp_path: Path) -> None:

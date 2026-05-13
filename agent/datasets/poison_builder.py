@@ -7,15 +7,17 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from agent.attacks.poison_index import apply_poisoning
+from agent.attacks.poison_index import PoisonGenerationContext, apply_poisoning
 from agent.datasets.bulk_writer import read_bulk_movies, write_poisoned_bulk
 from api.app.data.paths import (
     ES_BULK_MOVIES_JSONL,
     ES_BULK_POISONED_MOVIES_JSONL,
     resolve_output_dir,
 )
+from api.app.llm.registry import LlmRegistry
 from api.app.settings import get_settings
-from common.schemas.attack_config import load_attack_config
+from common.schemas.attack_config import AttackConfig, load_attack_config
+from common.schemas.llm_config import LlmConfig, default_llm_config
 from common.utils.genres import normalize_genres
 
 POISONED_BULK_META_JSON = "es_bulk_poisoned_movies.meta.json"
@@ -41,16 +43,30 @@ def build_poisoned_bulk(
         output_path,
     )
     config = load_attack_config(config_path)
+    llm_config = _load_llm_config_for_poison_generation()
+    generation_context = _build_generation_context(config=config, llm_config=llm_config)
     baseline_docs = read_bulk_movies(source_path, expected_index="movies")
     logger.info(
-        "poison_config_resolved phase=poison_build attack_type=%s poison_fraction=%s target_movie_id=%s payload_text_len=%s keyword_count=%s",
+        "poison_config_resolved phase=poison_build attack_type=%s poison_fraction=%s target_movie_id=%s payload_text_len=%s keyword_count=%s poison_generation_mode=%s poison_generator=%s:%s poison_prompt_profile=%s poison_generation_seed=%s poison_temperature=%s poison_max_tokens=%s poison_cache_policy=%s",
         config.attack_type,
         config.poison_fraction,
         config.target_movie_id,
         len(config.payload_text.strip()),
         len(config.keyword_list),
+        config.poison_generation_mode,
+        generation_context.provider or "none",
+        generation_context.model or "none",
+        generation_context.prompt_profile,
+        generation_context.seed,
+        generation_context.temperature,
+        generation_context.max_tokens,
+        config.poison_cache_policy,
     )
-    poisoned_docs = apply_poisoning(baseline_docs, config)
+    poisoned_docs, generation_stats = apply_poisoning(
+        baseline_docs,
+        config,
+        generation_context=generation_context,
+    )
     total_docs = write_poisoned_bulk(output_path, poisoned_docs)
     poisoned_count = sum(1 for doc in poisoned_docs if bool(doc.get("poison_marker", False)))
     diagnostics = _poison_diagnostics(
@@ -64,6 +80,16 @@ def build_poisoned_bulk(
         "poison_fraction": float(config.poison_fraction),
         "target_movie_id": int(config.target_movie_id) if config.target_movie_id is not None else None,
         "attack_config_sha256": _hash_file(config_path),
+        "generation_config_sha256": _generation_config_sha(config=config, generation_context=generation_context),
+        "poison_generation_mode": config.poison_generation_mode,
+        "poison_generator_provider": generation_context.provider,
+        "poison_generator_model": generation_context.model,
+        "poison_prompt_profile": generation_context.prompt_profile,
+        "poison_generation_seed": int(generation_context.seed),
+        "poison_temperature": float(generation_context.temperature),
+        "poison_max_tokens": int(generation_context.max_tokens),
+        "poison_cache_policy": config.poison_cache_policy,
+        "poison_generation_stats": generation_stats,
         "source_bulk_sha256": _hash_file(source_path),
         "output_bulk_sha256": _hash_file(output_path),
         "total_docs": int(total_docs),
@@ -76,6 +102,14 @@ def build_poisoned_bulk(
     summary: dict[str, Any] = {
         "attack_type": config.attack_type,
         "poison_fraction": config.poison_fraction,
+        "poison_generation_mode": config.poison_generation_mode,
+        "poison_generator_provider": generation_context.provider,
+        "poison_generator_model": generation_context.model,
+        "poison_prompt_profile": generation_context.prompt_profile,
+        "poison_generation_seed": generation_context.seed,
+        "poison_temperature": generation_context.temperature,
+        "poison_max_tokens": generation_context.max_tokens,
+        "poison_generation_stats": generation_stats,
         "total_docs": total_docs,
         "poisoned_docs": poisoned_count,
         "source_path": str(source_path),
@@ -88,11 +122,16 @@ def build_poisoned_bulk(
         summary["target_movie_id"] = int(config.target_movie_id)
 
     logger.info(
-        "poison_build_complete phase=poison_build attack_type=%s poison_fraction=%s total_docs=%s poisoned_docs=%s changed_title=%s changed_genres=%s changed_synopsis=%s changed_only_poison_fields=%s sample_poisoned_movie_ids=%s output_path=%s meta_path=%s",
+        "poison_build_complete phase=poison_build attack_type=%s poison_fraction=%s total_docs=%s poisoned_docs=%s poison_generation_mode=%s poison_generator=%s:%s llm_requests_total=%s llm_requests_failed=%s changed_title=%s changed_genres=%s changed_synopsis=%s changed_only_poison_fields=%s sample_poisoned_movie_ids=%s output_path=%s meta_path=%s",
         config.attack_type,
         config.poison_fraction,
         total_docs,
         poisoned_count,
+        config.poison_generation_mode,
+        generation_context.provider or "none",
+        generation_context.model or "none",
+        generation_stats.get("requests_total"),
+        generation_stats.get("requests_failed"),
         diagnostics["changed_title"],
         diagnostics["changed_genres"],
         diagnostics["changed_synopsis"],
@@ -134,11 +173,13 @@ def ensure_poisoned_bulk_fresh(
             "Configure attack before building poisoned bulk."
         )
 
+    config = load_attack_config(config_path)
     reason = _poisoned_bulk_status_reason(
         source_path=source_path,
         output_path=output_path,
         meta_path=meta_path,
         config_path=config_path,
+        config=config,
     )
     logger.info(
         "poison_freshness_check phase=poison_build reason=%s source_path=%s output_path=%s meta_path=%s attack_config_path=%s",
@@ -183,7 +224,10 @@ def _poisoned_bulk_status_reason(
     output_path: Path,
     meta_path: Path,
     config_path: Path,
+    config: AttackConfig,
 ) -> str:
+    if config.poison_cache_policy == "rebuild":
+        return "cache_policy_rebuild"
     if not output_path.exists() or output_path.stat().st_size == 0:
         return "missing_poisoned_bulk"
 
@@ -193,6 +237,9 @@ def _poisoned_bulk_status_reason(
 
     if metadata.get("attack_config_sha256") != _hash_file(config_path):
         return "attack_config_changed"
+    generation_context = _build_generation_context(config=config, llm_config=_load_llm_config_for_poison_generation())
+    if metadata.get("generation_config_sha256") != _generation_config_sha(config=config, generation_context=generation_context):
+        return "generation_config_changed"
     if metadata.get("source_bulk_sha256") != _hash_file(source_path):
         return "source_bulk_changed"
     if metadata.get("output_bulk_sha256") != _hash_file(output_path):
@@ -214,6 +261,73 @@ def _load_meta(path: Path) -> dict[str, Any] | None:
 
 def _hash_file(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
+
+
+def _load_llm_config_for_poison_generation() -> LlmConfig:
+    settings = get_settings()
+    path = settings.resolved_llm_config_path
+    if not path.exists() or path.stat().st_size == 0:
+        return default_llm_config()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return default_llm_config()
+    if not isinstance(payload, dict):
+        return default_llm_config()
+    try:
+        return LlmConfig.model_validate(payload)
+    except Exception:  # noqa: BLE001
+        return default_llm_config()
+
+
+def _build_generation_context(*, config: AttackConfig, llm_config: LlmConfig) -> PoisonGenerationContext:
+    if config.poison_generation_mode != "model_tied":
+        return PoisonGenerationContext(
+            mode="deterministic",
+            provider=None,
+            model=None,
+            prompt_profile=config.poison_prompt_profile,
+            seed=config.poison_generation_seed,
+            temperature=config.poison_temperature,
+            max_tokens=config.poison_max_tokens,
+            llm_client=None,
+        )
+
+    if config.poison_generator is not None:
+        provider = config.poison_generator.provider
+        model = config.poison_generator.model
+    else:
+        provider = llm_config.attacker.provider
+        model = llm_config.attacker.model
+
+    registry = LlmRegistry(settings=get_settings())
+    llm_client = registry.get_provider_client(provider=provider, model=model)
+    return PoisonGenerationContext(
+        mode="model_tied",
+        provider=provider,
+        model=model,
+        prompt_profile=config.poison_prompt_profile,
+        seed=config.poison_generation_seed,
+        temperature=config.poison_temperature,
+        max_tokens=config.poison_max_tokens,
+        llm_client=llm_client,
+    )
+
+
+def _generation_config_sha(*, config: AttackConfig, generation_context: PoisonGenerationContext) -> str:
+    payload = {
+        "attack_type": config.attack_type,
+        "poison_generation_mode": config.poison_generation_mode,
+        "poison_generator_provider": generation_context.provider,
+        "poison_generator_model": generation_context.model,
+        "poison_prompt_profile": generation_context.prompt_profile,
+        "poison_generation_seed": int(generation_context.seed),
+        "poison_temperature": float(generation_context.temperature),
+        "poison_max_tokens": int(generation_context.max_tokens),
+        "poison_cache_policy": config.poison_cache_policy,
+    }
+    rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return sha256(rendered.encode("utf-8")).hexdigest()
 
 
 def _poison_diagnostics(
@@ -299,4 +413,3 @@ def _poison_diagnostics(
         "target_is_poisoned": bool(target_is_poisoned),
         "target_movie_id": int(target_movie_id) if target_movie_id is not None else None,
     }
-

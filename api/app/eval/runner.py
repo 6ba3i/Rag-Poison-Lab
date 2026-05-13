@@ -191,6 +191,7 @@ def run_experiments(
     index_provenance, provenance_warnings = _resolve_eval_index_provenance(
         es_client=resolved_es_client,
         runtime_attack_config_sha256=attack_config_sha256,
+        runtime_attack_config=attack_config,
         processed_dir=resolved_settings.resolved_processed_dir,
     )
     eval_warnings.extend(provenance_warnings)
@@ -1031,6 +1032,7 @@ def _resolve_eval_index_provenance(
     *,
     es_client: Any,
     runtime_attack_config_sha256: str | None,
+    runtime_attack_config: AttackConfig,
     processed_dir: Path,
 ) -> tuple[dict[str, Any], list[str]]:
     warnings: list[str] = []
@@ -1064,6 +1066,33 @@ def _resolve_eval_index_provenance(
                     f"movies_poisoned indexed provenance (runtime={runtime_attack_config_sha256}, indexed={indexed_attack_sha}). "
                     "Rebuild poisoned bulk and reindex before eval."
                 )
+            if runtime_attack_config.poison_generation_mode == "model_tied":
+                indexed_generation_mode = provenance.get("poison_generation_mode")
+                if indexed_generation_mode != "model_tied":
+                    raise RuntimeError(
+                        "Poison generation/index provenance mismatch: runtime attack_config requires model_tied generation "
+                        f"but indexed provenance reports poison_generation_mode={indexed_generation_mode!r}. "
+                        "Rebuild poisoned bulk and reindex before eval."
+                    )
+                runtime_provider = (
+                    runtime_attack_config.poison_generator.provider
+                    if runtime_attack_config.poison_generator is not None
+                    else None
+                )
+                runtime_model = (
+                    runtime_attack_config.poison_generator.model
+                    if runtime_attack_config.poison_generator is not None
+                    else None
+                )
+                indexed_provider = provenance.get("poison_generator_provider")
+                indexed_model = provenance.get("poison_generator_model")
+                if runtime_provider != indexed_provider or runtime_model != indexed_model:
+                    raise RuntimeError(
+                        "Poison generator/index provenance mismatch: runtime attack_config poison_generator differs from "
+                        "movies_poisoned indexed provenance "
+                        f"(runtime={runtime_provider}:{runtime_model}, indexed={indexed_provider}:{indexed_model}). "
+                        "Rebuild poisoned bulk and reindex before eval."
+                    )
 
     for logical_index, bulk_name in (
         ("movies", ES_BULK_MOVIES_JSONL),
@@ -1647,6 +1676,11 @@ def _validate_target_poison_state(
     poison_marker = bool(source.get("poison_marker", False))
     poison_payload_present = bool(str(source.get("poison_payload", "") or "").strip())
     synopsis_present = bool(str(source.get("synopsis", "") or "").strip())
+    if attack_config.poison_generation_mode == "model_tied" and not synopsis_present:
+        return (
+            f"Target poisoning validation warning: target_movie_id={target_movie_id} present but has empty synopsis under "
+            "model_tied generation."
+        )
     if not poison_marker and not poison_payload_present:
         return (
             f"Target poisoning validation warning: target_movie_id={target_movie_id} present but appears unpoisoned "

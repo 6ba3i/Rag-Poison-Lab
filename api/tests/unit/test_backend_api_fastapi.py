@@ -222,6 +222,13 @@ def backend_client(tmp_path: Path) -> TestClient:
                 "target_boost_policy": "keyword_burst",
                 "target_boost_strength": 3,
                 "target_fields": ["title", "genres", "synopsis"],
+                "poison_generation_mode": "deterministic",
+                "poison_generator": None,
+                "poison_prompt_profile": "model_tied_v1",
+                "poison_generation_seed": 42,
+                "poison_temperature": 0.0,
+                "poison_max_tokens": 256,
+                "poison_cache_policy": "reuse",
             },
             indent=2,
         )
@@ -596,6 +603,9 @@ def test_attack_settings_endpoint_returns_live_config(backend_client: TestClient
     assert payload["attack_type"] == "targeted_promotion"
     assert payload["poison_fraction"] == 0.1
     assert payload["target_movie_id"] == 1666
+    assert payload["poison_generation_mode"] == "deterministic"
+    assert payload["poison_generator_provider"] is None
+    assert payload["poison_generator_model"] is None
     assert payload["config_exists"] is True
     assert isinstance(payload["config_sha256"], str) and len(payload["config_sha256"]) == 64
 
@@ -612,10 +622,21 @@ def test_attack_and_defense_settings_can_be_saved(backend_client: TestClient) ->
             "target_boost_policy": "keyword_burst",
             "target_boost_strength": 2,
             "target_fields": ["title", "synopsis"],
+            "poison_generation_mode": "model_tied",
+            "poison_generator_provider": "chatgpt",
+            "poison_generator_model": "gpt-5.4",
+            "poison_prompt_profile": "model_tied_v1",
+            "poison_generation_seed": 42,
+            "poison_temperature": 0.0,
+            "poison_max_tokens": 256,
+            "poison_cache_policy": "reuse",
         },
     )
     assert attack_update.status_code == 200
     assert attack_update.json()["attack_type"] == "prompt_injection"
+    assert attack_update.json()["poison_generation_mode"] == "model_tied"
+    assert attack_update.json()["poison_generator_provider"] == "chatgpt"
+    assert attack_update.json()["poison_generator_model"] == "gpt-5.4"
 
     defense_update = backend_client.put(
         "/api/settings/defense",

@@ -2,16 +2,39 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+
+from common.schemas.llm_config import ProviderName, canonicalize_model_name
 
 AttackType = Literal["targeted_promotion", "untargeted_degradation", "prompt_injection"]
 TargetBoostPolicy = Literal["disabled", "keyword_burst", "aggressive"]
 TargetBoostField = Literal["title", "genres", "synopsis"]
+PoisonGenerationMode = Literal["deterministic", "model_tied"]
+PoisonCachePolicy = Literal["reuse", "rebuild"]
 RETRIEVAL_TARGET_FIELDS: tuple[TargetBoostField, ...] = ("title", "genres", "synopsis")
 logger = logging.getLogger(__name__)
+
+
+class PoisonGeneratorConfig(BaseModel):
+    provider: ProviderName
+    model: str = Field(min_length=1, max_length=200)
+
+    @field_validator("model")
+    @classmethod
+    def _normalize_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized == "":
+            raise ValueError("model must not be empty")
+        return normalized
+
+    @model_validator(mode="after")
+    def _canonicalize_model_aliases(self) -> "PoisonGeneratorConfig":
+        self.model = canonicalize_model_name(provider=self.provider, model=self.model)
+        return self
 
 
 class AttackConfig(BaseModel):
@@ -23,6 +46,13 @@ class AttackConfig(BaseModel):
     target_boost_policy: TargetBoostPolicy = "keyword_burst"
     target_boost_strength: int = Field(default=4, ge=1, le=20)
     target_fields: list[TargetBoostField] = Field(default_factory=lambda: list(RETRIEVAL_TARGET_FIELDS))
+    poison_generation_mode: PoisonGenerationMode = "deterministic"
+    poison_generator: PoisonGeneratorConfig | None = None
+    poison_prompt_profile: str = Field(default="model_tied_v1", min_length=1, max_length=100)
+    poison_generation_seed: int = Field(default=42, ge=0)
+    poison_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    poison_max_tokens: int = Field(default=256, ge=1, le=4096)
+    poison_cache_policy: PoisonCachePolicy = "reuse"
 
     @field_validator("payload_text")
     @classmethod
@@ -86,6 +116,27 @@ class AttackConfig(BaseModel):
             return list(RETRIEVAL_TARGET_FIELDS)
         return output
 
+    @field_validator("poison_prompt_profile")
+    @classmethod
+    def _normalize_prompt_profile(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized == "":
+            raise ValueError("poison_prompt_profile must not be empty")
+        return normalized
+
+    @field_validator("poison_temperature")
+    @classmethod
+    def _validate_poison_temperature(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("poison_temperature must be finite")
+        return float(value)
+
+    @model_validator(mode="after")
+    def _validate_generation_mode(self) -> "AttackConfig":
+        if self.poison_generation_mode == "model_tied" and self.poison_generator is None:
+            raise ValueError("poison_generator is required when poison_generation_mode=model_tied")
+        return self
+
 
 def default_attack_config() -> AttackConfig:
     return AttackConfig(
@@ -97,6 +148,13 @@ def default_attack_config() -> AttackConfig:
         target_boost_policy="keyword_burst",
         target_boost_strength=4,
         target_fields=["title", "genres", "synopsis"],
+        poison_generation_mode="deterministic",
+        poison_generator=None,
+        poison_prompt_profile="model_tied_v1",
+        poison_generation_seed=42,
+        poison_temperature=0.0,
+        poison_max_tokens=256,
+        poison_cache_policy="reuse",
     )
 
 
@@ -128,7 +186,7 @@ def load_attack_config(path: Path) -> AttackConfig:
         raise ValueError(f"Attack config validation failed for {resolved}: {exc}") from exc
 
     logger.info(
-        "attack_config_loaded path=%s attack_type=%s poison_fraction=%s target_movie_id=%s payload_text_len=%s keyword_count=%s target_boost_policy=%s target_boost_strength=%s target_fields=%s",
+        "attack_config_loaded path=%s attack_type=%s poison_fraction=%s target_movie_id=%s payload_text_len=%s keyword_count=%s target_boost_policy=%s target_boost_strength=%s target_fields=%s poison_generation_mode=%s poison_generator=%s:%s poison_prompt_profile=%s poison_generation_seed=%s poison_temperature=%s poison_max_tokens=%s poison_cache_policy=%s",
         resolved,
         config.attack_type,
         config.poison_fraction,
@@ -138,6 +196,14 @@ def load_attack_config(path: Path) -> AttackConfig:
         config.target_boost_policy,
         config.target_boost_strength,
         list(config.target_fields),
+        config.poison_generation_mode,
+        config.poison_generator.provider if config.poison_generator is not None else "none",
+        config.poison_generator.model if config.poison_generator is not None else "none",
+        config.poison_prompt_profile,
+        config.poison_generation_seed,
+        config.poison_temperature,
+        config.poison_max_tokens,
+        config.poison_cache_policy,
     )
     if config.target_movie_id is not None and config.attack_type == "untargeted_degradation":
         logger.warning(

@@ -4,7 +4,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from common.schemas.attack_config import AttackType, TargetBoostField, TargetBoostPolicy
+from common.schemas.attack_config import (
+    AttackType,
+    PoisonCachePolicy,
+    PoisonGenerationMode,
+    TargetBoostField,
+    TargetBoostPolicy,
+)
 from common.schemas.defense_config import DefenseSuspicionMode
 from common.schemas.llm_config import LlmConfig, ProviderName, RankingMode, RetrievalMode
 
@@ -168,6 +174,14 @@ class AttackSettingsResponse(BaseModel):
     target_boost_policy: TargetBoostPolicy
     target_boost_strength: int
     target_fields: list[TargetBoostField]
+    poison_generation_mode: PoisonGenerationMode
+    poison_generator_provider: ProviderName | None = None
+    poison_generator_model: str | None = None
+    poison_prompt_profile: str
+    poison_generation_seed: int
+    poison_temperature: float
+    poison_max_tokens: int
+    poison_cache_policy: PoisonCachePolicy
     config_path: str
     config_exists: bool
     config_sha256: str | None = None
@@ -182,6 +196,14 @@ class AttackSettingsRequest(BaseModel):
     target_boost_policy: TargetBoostPolicy = "keyword_burst"
     target_boost_strength: int = Field(default=4, ge=1, le=20)
     target_fields: list[TargetBoostField] = Field(default_factory=list)
+    poison_generation_mode: PoisonGenerationMode = "deterministic"
+    poison_generator_provider: ProviderName | None = None
+    poison_generator_model: str | None = None
+    poison_prompt_profile: str = "model_tied_v1"
+    poison_generation_seed: int = Field(default=42, ge=0)
+    poison_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    poison_max_tokens: int = Field(default=256, ge=1, le=4096)
+    poison_cache_policy: PoisonCachePolicy = "reuse"
 
 
 class DefenseSettingsRequest(BaseModel):

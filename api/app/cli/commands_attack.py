@@ -6,6 +6,8 @@ from typing import Any
 import typer
 
 from agent.datasets.poison_builder import build_poisoned_bulk
+from api.app.llm.registry import LlmRegistry
+from api.app.settings import get_settings
 
 attack_app = typer.Typer(help="Attack dataset commands")
 
@@ -15,6 +17,9 @@ def build_poisoned(
     processed_dir: Path | None,
     attack_config: Path | None,
 ) -> dict[str, Any]:
+    # Ensure attacker provider/model config is resolvable early when model-tied generation is enabled.
+    # The builder will still instantiate the concrete provider client per run.
+    LlmRegistry(settings=get_settings())
     return build_poisoned_bulk(
         processed_dir=processed_dir,
         attack_config_path=attack_config,

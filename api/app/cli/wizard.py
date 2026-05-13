@@ -420,6 +420,13 @@ def _configure_attack_screen() -> None:
             target_boost_policy=target_boost_policy,
             target_boost_strength=target_boost_strength,
             target_fields=target_fields,
+            poison_generation_mode=current.poison_generation_mode,
+            poison_generator=current.poison_generator,
+            poison_prompt_profile=current.poison_prompt_profile,
+            poison_generation_seed=current.poison_generation_seed,
+            poison_temperature=current.poison_temperature,
+            poison_max_tokens=current.poison_max_tokens,
+            poison_cache_policy=current.poison_cache_policy,
         )
 
         config_path.parent.mkdir(parents=True, exist_ok=True)
