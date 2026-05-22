@@ -1,0 +1,51 @@
+Our results show that that recommendation tampering can be achieved through multiple types of attacks and with different results expectation for each. We will study those results from an engineering perspective and Discuss way to protect users and consumers from malicious actors that might to influence the outcome of such system. None of attacks are stronger than the other and each of them have a different role or result they are trying to achieve, this also means that a solution that fits all attacks is not possible but we will try to find a way that evens out the playing field \cite{ragpoisonlab_repo,nguyen2024manipulatingrecsys,wang2024recpoisonsurvey}.
+
+\subsection{Interpretation by Attack Type}
+
+Targeted promotion is the clearest target-oriented family to study, in our experiment, all five runs will achieve strong ASR results with minimal yet still relevant results. It is made to bring a single item to the top without hurting the rest of the list. This also means that if only reccomendation quality metrics are recorded, the impact of its manipulation could be disregarded. So it's capable of achieving its goal without ever noticing any tampering \cite{ragpoisonlab_repo,herlocker2004evaluating,wang2013ndcg}.
+
+Prompt injection is similar, but it's the only attack where we actually carry a \texttt{poison\_payload} into the victim model. the use of it relevant when the attacked environnement heavily relies on LLM reranking because the reranker consumes natural-language and will return and ordered list, making an injected payload devastating as it can be taken as an instruction. We notice a similar pattern as targeted promotion and end up with Positive results on all run for ASR deltas while kepping the reccomendation-quality quite similar to baseline. it shows that targeted-oriented effect can have devastating impact if not accounted for, and it is particularly more impactfule when we remember that LLM-powered recommenders deal with a lot ofrich text and data, explanations and more making an injected payload almost unoticeable to a human but noticeable for an LLM which will take it as a systemm request. If the text becomes unsafe, the boundary between data and instruction becomes a security concern rather than merely a formatting concern \cite{ragpoisonlab_repo,hou2024llmrankers,sun2024rankgpt,greshake2023indirectpi,yi2025bipia}.
+
+Untargeted degradation is on complete different path than the other ones and is most likely to be caught if the system is being monitored, it is extremely effective at reducing the quality of reccomendations by a noticeable margin. It's approach could be compared to a brute force attack where no target is set.Based on that, the results are unsurprising but useful to our analysis: the metrics display the strength of the attack without the ASR for previously discussed reasons. The most important observation is that by simply perturbing some of the itemm context it completely loses its value in a LLM-based recommender. This family is thus considered a quality risk rather than an exposure risk \cite{ragpoisonlab_repo,zhong2023retrievalcorpora,nazary2025poisonrag}.
+
+The Results also show us that the attacker isn't the real parameter to consider but rather the setup build around it, like the ranking and retrieval method and the intesity set to each policy. We are not trying to rank providers as the small pool selected is not enough to mmake any type of ranking. We also need to consider the implication of even the smallest delta values. they are the average of almost a thousand users for each run, meaning that whhile some user had no impact, some other recommendation quality was greatly deteriorated \cite{ragpoisonlab_repo}.
+
+These 3 families show us why a RAG LLM-based recommender cannot rely on a handful of metrics. ASR alone couldn't have diagnosed the results of untargeted degradation, HR or MRR wouldnt be sufficient to diagnose a targeted attack. A single metric that fits all will never be able to protect such system \cite{herlocker2004evaluating,wang2013ndcg,liang2023helm,ru2024ragchecker}.
+
+\subsection{Defense Concepts and Implemented Controls}
+
+The first defense system to consider would be to include a filtering serivce in the retrieval pipeline, catching suspicious documents before they get to the ranking step, removing them and reindexing from the clean bulk. A sample of a defensive process was included in the current code as a theoretical mesure but wasnt executed as a run for budget concerns \cite{ragpoisonlab_repo}.
+
+\noindent\textit{\footnotesize Code excerpt: Defense guard between retrieval and reranking \cite{ragpoisonlab_repo}.}\par\vspace{0.2em}
+\begin{minted}{python}
+active_defense = (
+    defense_config_override
+    if mode == "attacked"
+    and defense_config_override is not None
+    and defense_config_override.enabled
+    else None
+)
+
+defense_result = apply_retrieval_defense(
+    candidates=retrieval_result.candidates,
+    config=active_defense,
+)
+retrieval_candidates = list(defense_result.candidates)
+
+prompt_candidates, prompt_defense_debug = sanitize_candidates_for_prompt(
+    candidates=candidates,
+    config=active_defense,
+)
+\end{minted}
+
+it's a simple protocol, not a full on detector, but it can be very impactful if clear markers are implemented in the bulk that can be recognized like poison markers or replicated patterns. The issue is small paraphrasing or un recognizable subtle label poisoning wouldn't be caught by a tool like this. But if use alongside another defense tool like anomaly detection where we notice that suspicious documents have different length, repetitions, keyword density and inconsistencies. it could be a first step in solving the poisoning of recommenders \cite{jia2023pore,nguyen2024manipulatingrecsys,wang2024recpoisonsurvey}. Many RAG security studies are exploring ways to identify poisoned retrieval behavior or suspicious activation patterns using defense mechanisms similar to the ones raised \cite{tan2025revprag,xue2024badrag}.
+
+the second option to consider would be the penalizing susppected poisoned document by giving them a low retrieval score, it would be very effective but raises a very high riskk of false positives that could itself endanger the recommendation pipeline \cite{jia2023pore,nguyen2024manipulatingrecsys,wang2024recpoisonsurvey}. 
+
+The third protocol to consider, which will be the strongest especially in the case of prompt injection, is rerank sanitization. Before sending the prompt to the LLM we first use a script to go through the list finding injected payloads or poisoning markers, then sanitizes the input before sending it to the LLM. As an addition we could also use tags at the start and the end of each entry to inform the LLM that this is not a system prompt but a user prompt using tag like \texttt{\textless user\_input\textgreater{}\textless/user\_input\textgreater{}}. this could mitigate some of the risks from an injection \cite{ragpoisonlab_repo}. Structured prompt designs, explicit sources, and instruction/data separation are  mostly aligned with current defense work using structured queries, spotlighting and instruction hierarchy \cite{chen2024struq,hines2024spotlighting,wallace2024instructionhierarchy}. 
+
+Finally, Defense systems need to be constantly evaluated. As LLM become more and more efficient and smart, old methods might become obeselete, even if a defense still looks plausible. The safest method is to filter and sanitize suspicious documents at a set rate to avoid any worry and to always have multiple metrics running to make sure that the recommender system isn't being tampered with \cite{ru2024ragchecker,barnett2024ragfailurepoints,debenedetti2024agentdojo,mazeika2024harmbench}.
+
+\subsection{Responsible Engineering Implications}
+
+The important lesson to get from this experiment is that evaluation before deployment is absolutely necessary, even if the catalogue seems benign and free of injections. The impaact of such attacks will be felt by the customers whose expectations won't be met based on the standard and type of product they expect. This claime is being made on a small simulated environement meant to study the dangers of such attack, i believe a next step would be to make it a tool tor try and test new defense methods \cite{ragpoisonlab_repo,harper2015movielens,perez2022redteaming,mazeika2024harmbench}.
