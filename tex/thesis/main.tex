@@ -1,0 +1,136 @@
+\documentclass[12pt]{article}
+\usepackage[a4paper,margin=0.9in]{geometry}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage[section]{placeins}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage[outputdir=output]{minted}
+\usepackage{etoolbox}
+\usepackage{pdflscape}
+\usepackage{chngcntr}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+  \usepackage[T1]{fontenc}
+\else
+  \usepackage{fontspec}
+  \usepackage{xeCJK}
+  \setmainfont{Latin Modern Roman}
+  \setCJKmainfont{FandolSong-Regular}
+\fi
+
+\setstretch{1.42}
+\setlength{\parskip}{0.1em}
+\setlength{\parindent}{1.2em}
+\setlength{\headheight}{14.5pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize Red-Teaming Large Language Model-Powered Recommendation Systems}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyhead[L]{\footnotesize Red-Teaming Large Language Model-Powered Recommendation Systems}
+  \fancyhead[R]{\thepage}
+  \renewcommand{\headrulewidth}{0.4pt}
+}
+
+
+
+\setminted[python]{
+  fontsize=\scriptsize,
+  breaklines=true,
+  breakanywhere=true,
+  frame=single,
+  bgcolor=gray!5,
+  tabsize=4,
+  autogobble
+}
+
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue,
+  pdftitle={Red-Teaming Large Language Model-Powered Recommendation Systems},
+  pdfauthor={Sbaaoui Idriss}
+}
+
+\AtBeginEnvironment{longtable}{\singlespacing}
+\counterwithin{figure}{section}
+\renewcommand{\thefigure}{\thesection-\arabic{figure}}
+
+\title{\textbf{Red-Teaming Large Language Model-Powered Recommendation Systems}}
+\author{计(英)220 Sbaaoui Idriss（22060004）\\Computer Science, 华东理工大学\\Supervisor: 张恒润}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{fancy}
+
+
+
+\section*{Abstract}
+\addcontentsline{toc}{section}{Abstract}
+
+\input{sections/abstract}
+\noindent\textbf{Keywords: } RAG, LLM-powered recommender systems, recommender security, retrieval poisoning
+\clearpage
+
+\section*{Acknowledgments}
+\input{sections/acknowledgments}
+
+\clearpage
+\tableofcontents
+\clearpage
+
+\section{Introduction}
+\input{sections/01_introduction}
+
+\section{Background and Related Work}
+\input{sections/02_background_related_work}
+
+\section{System Design}
+\label{sec:system-design}
+\input{sections/03_system_design}
+
+\section{Methodology}
+\label{sec:methodology}
+\input{sections/04_methodology}
+
+\section{Experiments and Results}
+\input{sections/05_experiments_results}
+
+\section{Discussion, Defenses, and Limitations}
+\input{sections/06_discussion_defenses_limitations}
+
+\section{Conclusion and Future Work}
+\input{sections/07_conclusion_future_work}
+
+\clearpage
+\appendix
+\begin{landscape}
+\section{Full Final Experiment Matrix}
+\label{sec:full-final-experiment-matrix}
+% Batch 02: generated directly from data/results/full/combined_results.md via tex/thesis/scripts/parse_results.py.
+\input{tables/combined_results_table}
+\end{landscape}
+
+\clearpage
+\begingroup
+\small
+\nocite{ragpoisonlab_repo}
+\bibliographystyle{unsrt}
+\bibliography{references}
+\endgroup
+
+\end{document}
