@@ -8,7 +8,7 @@
 \usepackage{array}
 \usepackage{longtable}
 \usepackage{xcolor}
-\usepackage[outputdir=output]{minted}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
 \usepackage{etoolbox}
 \usepackage{pdflscape}
 \usepackage{chngcntr}
@@ -44,17 +44,6 @@
 
 
 
-\setminted[python]{
-  fontsize=\scriptsize,
-  breaklines=true,
-  breakanywhere=true,
-  frame=single,
-  bgcolor=gray!5,
-  tabsize=4,
-  autogobble
-}
-
-
 \hypersetup{
   colorlinks=true,
   linkcolor=blue,
@@ -63,6 +52,15 @@
   pdftitle={Red-Teaming Large Language Model-Powered Recommendation Systems},
   pdfauthor={Sbaaoui Idriss}
 }
+
+
+\SetAlgorithmName{Algorithm}{Algorithm}{List of Algorithms}
+\SetAlgoCaptionSeparator{.}
+\SetAlFnt{\footnotesize}
+\SetAlCapFnt{\footnotesize}
+\SetAlCapNameFnt{\footnotesize\bfseries}
+\SetKwInput{KwInput}{Input}
+\SetKwInput{KwOutput}{Output}
 
 \AtBeginEnvironment{longtable}{\singlespacing}
 \counterwithin{figure}{section}

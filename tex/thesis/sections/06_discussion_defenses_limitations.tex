@@ -16,27 +16,20 @@ These 3 families show us why a RAG LLM-based recommender cannot rely on a handfu
 
 The first defense system to consider would be to include a filtering serivce in the retrieval pipeline, catching suspicious documents before they get to the ranking step, removing them and reindexing from the clean bulk. A sample of a defensive process was included in the current code as a theoretical mesure but wasnt executed as a run for budget concerns \cite{ragpoisonlab_repo}.
 
-\noindent\textit{\footnotesize Code excerpt: Defense guard between retrieval and reranking \cite{ragpoisonlab_repo}.}\par\vspace{0.2em}
-\begin{minted}{python}
-active_defense = (
-    defense_config_override
-    if mode == "attacked"
-    and defense_config_override is not None
-    and defense_config_override.enabled
-    else None
-)
-
-defense_result = apply_retrieval_defense(
-    candidates=retrieval_result.candidates,
-    config=active_defense,
-)
-retrieval_candidates = list(defense_result.candidates)
-
-prompt_candidates, prompt_defense_debug = sanitize_candidates_for_prompt(
-    candidates=candidates,
-    config=active_defense,
-)
-\end{minted}
+\begin{algorithm}[H]
+\caption{Apply retrieval and prompt-sanitization defense \cite{ragpoisonlab_repo}}
+\KwInput{Retrieved candidates, recommendation mode, optional defense configuration}
+\KwOutput{Filtered candidates, sanitized prompt candidates, and defense debug evidence}
+\If{the recommendation is attacked and a defense configuration is enabled}{
+  Inspect retrieved candidates before ranking or reranking\;
+  Remove, flag, or down-rank candidates that match suspicious-document rules\;
+  Sanitize candidate text before it is placed into an LLM reranking prompt\;
+  Keep debug evidence showing which candidates were filtered or sanitized\;
+}
+\Else{
+  Pass candidates through unchanged while recording that no defense was active\;
+}
+\end{algorithm}
 
 it's a simple protocol, not a full on detector, but it can be very impactful if clear markers are implemented in the bulk that can be recognized like poison markers or replicated patterns. The issue is small paraphrasing or un recognizable subtle label poisoning wouldn't be caught by a tool like this. But if use alongside another defense tool like anomaly detection where we notice that suspicious documents have different length, repetitions, keyword density and inconsistencies. it could be a first step in solving the poisoning of recommenders \cite{jia2023pore,nguyen2024manipulatingrecsys,wang2024recpoisonsurvey}. Many RAG security studies are exploring ways to identify poisoned retrieval behavior or suspicious activation patterns using defense mechanisms similar to the ones raised \cite{tan2025revprag,xue2024badrag}.
 

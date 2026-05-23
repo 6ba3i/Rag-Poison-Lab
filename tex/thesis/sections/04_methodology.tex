@@ -37,92 +37,85 @@ All three attacks have diifferent evidence patterns analysis. For targeted promo
 
 In this small section we will take a closer look to previously made claims, the attack family does not directly change the recommender logic and only changes the bulk stored in Elastic search by reading the clean \texttt{movies} bulk and applying family based modifications to the necessary documents. We also record the metadata that was modified as an entry for future audits with clear distinction for what fields were changed or modified \cite{ragpoisonlab_repo}.
 
-\noindent\textit{\footnotesize Code excerpt: Poisoned bulk construction.}\par\vspace{0.2em}\begin{minted}{python}
-baseline_docs = read_bulk_movies(source_path, expected_index="movies")
-poisoned_docs, generation_stats = apply_poisoning(
-    baseline_docs,
-    config,
-    generation_context=generation_context,
-)
-total_docs = write_poisoned_bulk(output_path, poisoned_docs)
-poisoned_count = sum(1 for doc in poisoned_docs if bool(doc.get("poison_marker", False)))
-diagnostics = _poison_diagnostics(
-    baseline_docs=baseline_docs,
-    poisoned_docs=poisoned_docs,
-    target_movie_id=config.target_movie_id,
-)
-\end{minted}
+\begin{algorithm}[H]
+\caption{Build poisoned movie corpus}
+\KwInput{Clean \texttt{movies} bulk, selected attack configuration, generation context}
+\KwOutput{Poisoned movie bulk and audit diagnostics}
+Read the clean movie records from the baseline \texttt{movies} bulk\;
+Apply the selected attack configuration to create a separate poisoned copy of the records\;
+Write the poisoned records to a new bulk file instead of changing the clean corpus in place\;
+Count records marked as poisoned and compare the clean and poisoned corpora\;
+Store counts and diagnostics as audit evidence for the run\;
+\end{algorithm}
 
 the index level effect happen whe the poisoned documents are written back in to JSONL where we normalize the modification into the \texttt{movies\_poisoned} index. This is the step where the poisoned data because its own separate retrievablle index and not just local file modification \cite{ragpoisonlab_repo,elastic_docs_es}.
 
-\noindent\textit{\footnotesize Code excerpt: Poisoned JSONL bulk action.}\par\vspace{0.2em}\begin{minted}{python}
-for raw_doc in ordered_docs:
-    doc = _normalize_doc(document=raw_doc, action_id=str(raw_doc.get("movie_id", "")).strip(), doc_line=0)
-    action = {"index": {"_index": "movies_poisoned", "_id": doc["movie_id"]}}
-    handle.write(json.dumps(action, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
-    handle.write("\n")
-    handle.write(json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
-    handle.write("\n")
-\end{minted}
+\begin{algorithm}[H]
+\caption{Serialize poisoned documents for indexing}
+\KwInput{Ordered poisoned movie records}
+\KwOutput{JSONL bulk actions for \texttt{movies\_poisoned}}
+\ForEach{poisoned movie record}{
+  Normalize required identifiers and fields\;
+  Create an indexing instruction for the \texttt{movies\_poisoned} index\;
+  Write the indexing instruction to the bulk file\;
+  Write the normalized movie record after the instruction\;
+}
+\end{algorithm}
 
 The three attacks have different implementation methods for when we create the poisoned bulk. Targeted promotion selects a document, and boosts the modified targeted fields of the selected movies. Prompt injection on the other hand will also mark a selected document but i will also store instruction text in \texttt{poison\_payload} for the selected movie on top of extending the synopsis. Untargeted generation will affect the reccomendation evidence by rotating genres among a pool of movies and change the synopsis to unrelated text.
 
-\noindent\textit{\footnotesize Code excerpt: Targeted promotion marker and boost.}\par\vspace{0.2em}
-\begin{minted}{python}
-payload = payload_text.strip() or DEFAULT_TARGETED_PAYLOAD
-target_id = str(target_movie_id) if target_movie_id is not None else None
+\begin{algorithm}[H]
+\caption{Mark and boost targeted documents}
+\KwInput{Selected movie records, optional target movie, boost policy}
+\KwOutput{Poisoned records with target-promotion evidence}
+Choose the configured target movie, or use the selected attack records when no single target is fixed\;
+\ForEach{selected record}{
+  Mark the record with \texttt{poison\_marker} and store sanitized \texttt{poison\_payload} evidence\;
+  \If{the record is the intended target for promotion}{
+    Add the configured boost terms to the allowed target fields\;
+  }
+  Leave non-target evidence unchanged except for the audit marker\;
+}
+\end{algorithm}
 
-for idx in selected:
-    doc = output[idx]
-    doc["poison_marker"] = True
-    doc["poison_payload"] = payload
-    should_boost = target_id is None or str(doc.get("movie_id", "")).strip() == target_id
-    if should_boost:
-        apply_target_boost(
-            doc=doc,
-            keyword_list=keyword_list,
-            target_boost_policy=target_boost_policy,
-            target_boost_strength=target_boost_strength,
-            target_fields=target_fields,
-        )
-\end{minted}
+\begin{algorithm}[H]
+\caption{Attach payload and target-facing text}
+\KwInput{Selected movie records, sanitized payload, optional target movie, configured keywords}
+\KwOutput{Prompt-injection-style poisoned records for indexing}
+Resolve the configured keywords that should make the target more visible during retrieval or reranking\;
+\ForEach{selected record}{
+  Mark the record with \texttt{poison\_marker} and store the sanitized payload in \texttt{poison\_payload}\;
+  \If{the record is the configured target}{
+    Append the resolved keyword text to its synopsis field\;
+  }
+  Preserve the modified record as data to be indexed, not as a change to recommender code\;
+}
+\end{algorithm}
 
-\noindent\textit{\footnotesize Code excerpt: Prompt injection payload and target synopsis suffix.}\par\vspace{0.2em}
-\begin{minted}{python}
-payload = payload_text.strip() or DEFAULT_INJECTION_PAYLOAD
-keyword_suffix = " ".join(resolve_keywords(keyword_list)).strip()
-target_id = str(target_movie_id) if target_movie_id is not None else None
-
-for idx in selected:
-    doc = output[idx]
-    doc["poison_marker"] = True
-    doc["poison_payload"] = payload
-    if target_id is not None and str(doc.get("movie_id", "")).strip() == target_id and keyword_suffix:
-        synopsis = str(doc.get("synopsis", "") or "").strip()
-        doc["synopsis"] = f"{synopsis} {keyword_suffix}".strip() if synopsis else keyword_suffix
-\end{minted}
-
-\noindent\textit{\footnotesize Code excerpt: Untargeted degradation field mutation.}\par\vspace{0.2em}\begin{minted}{python}
-doc["genres"] = genres
-doc["synopsis"] = UNRELATED_SYNOPSIS_TEXT
-doc["poison_marker"] = True
-doc["poison_payload"] = ""
-\end{minted}
+\begin{algorithm}[H]
+\caption{Degrade selected document evidence}
+\KwInput{Selected movie records for untargeted degradation}
+\KwOutput{Poisoned records designed to reduce recommendation quality}
+\ForEach{selected record}{
+  Replace or rotate selected genre evidence so the record becomes less reliable for recommendation\;
+  Replace the synopsis with unrelated text to weaken semantic retrieval and reranking evidence\;
+  Mark the record with \texttt{poison\_marker} while leaving \texttt{poison\_payload} empty\;
+}
+Evaluate the effect through recommendation-quality metrics rather than targeted ASR\;
+\end{algorithm}
 
 After the the modifications made by each attack depending on the one selected are completed, the indexing builds an index out of the JSONL bulk and then switches the alias \texttt{movies\_poisoned} alias to the new physical index, clearly separating it from the clean \cite{ragpoisonlab_repo,elastic_docs_es}
 
-\noindent\textit{\footnotesize Code excerpt: Poisoned index alias switch.}\par\vspace{0.2em}\begin{minted}{python}
-bulk_path = _processed_dir(processed_dir) / ES_BULK_POISONED_MOVIES_JSONL
-physical_index = _build_physical_index_name(logical_alias=INDEX_MOVIES_POISONED, bulk_path=bulk_path)
-_create_index(physical_index, mapping_path=resolved_mapping_path, es_url=base)
-indexed = _bulk_index(
-    INDEX_MOVIES_POISONED,
-    physical_index_name=physical_index,
-    bulk_path=bulk_path,
-    es_url=base,
-)
-alias_state = _switch_alias(alias_name=INDEX_MOVIES_POISONED, new_index=physical_index, es_url=base)
-\end{minted}
+\begin{algorithm}[H]
+\caption{Publish the poisoned index}
+\KwInput{Poisoned movie bulk and Elasticsearch movie mapping}
+\KwOutput{Updated \texttt{movies\_poisoned} alias and indexing audit state}
+Locate the poisoned movie bulk generated for the current run\;
+Create a fresh physical Elasticsearch index using the movie mapping\;
+Bulk-index the poisoned records into that physical index\;
+Move the \texttt{movies\_poisoned} alias to the new physical index\;
+Record the indexing count and alias state so the run can be audited later\;
+\end{algorithm}
 
 \subsection{Experimental Workflow}
 
