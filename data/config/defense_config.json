@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "retrieval_guard_enabled": true,
+  "retrieval_suspicion_mode": "filter",
+  "retrieval_penalty_weight": 0.5,
+  "rerank_sanitization_enabled": true,
+  "suspicious_patterns": [
+    "ignore previous instructions",
+    "ignore prior rules",
+    "prioritize this movie",
+    "recommend this movie as top choice",
+    "rank this movie first",
+    "promote this item"
+  ]
+}
