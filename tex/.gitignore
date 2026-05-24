@@ -7,3 +7,12 @@
 *.out
 *.synctex.gz
 *.xdv
+*.toc
+thesis/batches
+thesis/corpus
+thesis/scripts
+thesis/references.md
+thesis/scripts_audit_batch3.py
+thesis/THESIS_STATUS.md
+thesis/thesis_text_extract.txt
+thesis/TODO.md

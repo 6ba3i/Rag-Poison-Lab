@@ -15,3 +15,9 @@ api/app/static/
 __pycache__/
 .omx
 graphify-out
+.codex
+package.json
+package-lock.json
+AGENTS.md
+.graphify_python
+.graphify_chunks.json
