@@ -26,9 +26,49 @@ To better display all attack families Figure~\ref{fig:attack-pipeline} shows how
 
 Targeted promotion allows the attacker to choose or auto select a targeted movie and modify the indexed documents to give the selected item a higher chance to appear in the top recommendations making it the most direct attack family. all implemented poison metadata is recorded alongside the keyword boosting policy value. It is supposed to answer the following question: Does the targeted movie enter the top-$k$ under the selected conditions? It uses a supporting metric, ASR@K,  to answer that question on top of the previously cited metrics, as the attack can be successful even if HR or NDCG doesn't seem to change much because the objective is to push one movie or item to the top \cite{ragpoisonlab_repo,nguyen2024manipulatingrecsys,wang2024recpoisonsurvey}.
 
+\begin{algorithm}[H]
+\caption{Mark and boost targeted documents}
+\KwInput{Selected movie records, optional target movie, boost policy}
+\KwOutput{Poisoned records with target-promotion evidence}
+Choose the configured target movie, or use the selected attack records when no single target is fixed\;
+\ForEach{selected record}{
+  Mark the record with \texttt{poison\_marker} and store sanitized \texttt{poison\_payload} evidence\;
+  \If{the record is the intended target for promotion}{
+    Add the configured boost terms to the allowed target fields\;
+  }
+  Leave non-target evidence unchanged except for the audit marker\;
+}
+\end{algorithm}
+
 Prompt injection studies a similar risk with some slight differences. When using RAG, the retrieved text is consumed later on by the LLM so it leaves an opening for malicious instruction like text to be injected in one of the retrieved items \cite{greshake2023indirectpi,yi2025bipia}. Prompt injection are thus represented as controlled benchmark records where we inject and store a payload, whether through the LLM or deterministically and then store it in \texttt{poison\_payload}. In Section~\ref{sec:system-design} we show the exact benchmark payloads used. For this family the question is whether the injected item can reach the retrieval/ranking path and help push a certain item to the top-$k$ recommendations. The ASR metric is thus useful and necessary for this attack too \cite{ragpoisonlab_repo,greshake2023indirectpi,yi2025bipia,nguyen2024manipulatingrecsys,wang2024recpoisonsurvey}.
 
+\begin{algorithm}[H]
+\caption{Attach payload and target-facing text}
+\KwInput{Selected movie records, sanitized payload, optional target movie, configured keywords}
+\KwOutput{Prompt-injection-style poisoned records for indexing}
+Resolve the configured keywords that should make the target more visible during retrieval or reranking\;
+\ForEach{selected record}{
+  Mark the record with \texttt{poison\_marker} and store the sanitized payload in \texttt{poison\_payload}\;
+  \If{the record is the configured target}{
+    Append the resolved keyword text to its synopsis field\;
+  }
+  Preserve the modified record as data to be indexed, not as a change to recommender code\;
+}
+\end{algorithm}
+
 untargeted on the other hand is, as said previously, more for quality damage as it doesn't promote any specific items but rather hurt select documents so that general results becomes useless for recommendation. The current code implements this attack by adding or rather making harmful transformation by modifying the genres or replacing the synopsis with non relevant text \cite{ragpoisonlab_repo}. The question it raises is how much is top-$k$ list affected in keeping the relevant recommended items and how low are they pushed down the list. contrary to the previous attacks here ASR is not relevant so HR NDCG and MRR are the main metrics for this attack \cite{ragpoisonlab_repo}
+
+\begin{algorithm}[H]
+\caption{Degrade selected document evidence}
+\KwInput{Selected movie records for untargeted degradation}
+\KwOutput{Poisoned records designed to reduce recommendation quality}
+\ForEach{selected record}{
+  Replace or rotate selected genre evidence so the record becomes less reliable for recommendation\;
+  Replace the synopsis with unrelated text to weaken semantic retrieval and reranking evidence\;
+  Mark the record with \texttt{poison\_marker} while leaving \texttt{poison\_payload} empty\;
+}
+Evaluate the effect through recommendation-quality metrics rather than targeted ASR\;
+\end{algorithm}
 
 All three attacks have different evidence patterns analysis. For targeted promotion we should primarily look at the targeted item and its final position in the top-$k$, for prompt injection we look at the trace left in the payload too along side the final top-$k$ of the targeted item. and for untargeted degradation it solely comes down to the metrics result. this is thus a reminder to not look at ASR as the main metric proving the impact of an attack since in one like untargeted degradation its relevance is non existent, it's also a reminder for targeted promotion and untarget degradation that the other metrics won't have as much of a difference compared to baseline as the purpose is a surgical uplift of a target rather than hurting the whole list \cite{ragpoisonlab_repo}.
 
@@ -63,46 +103,6 @@ the index level effect happen when the poisoned documents are written back in to
 \end{algorithm}
 
 The three attacks have different implementation methods for when we create the poisoned bulk. Targeted promotion selects a document, and boosts the modified targeted fields of the selected movies. Prompt injection on the other hand will also mark a selected document but i will also store instruction text in \texttt{poison\_payload} for the selected movie on top of extending the synopsis. Untargeted generation will affect the recommendation evidence by rotating genres among a pool of movies and change the synopsis to unrelated text.
-
-\begin{algorithm}[H]
-\caption{Mark and boost targeted documents}
-\KwInput{Selected movie records, optional target movie, boost policy}
-\KwOutput{Poisoned records with target-promotion evidence}
-Choose the configured target movie, or use the selected attack records when no single target is fixed\;
-\ForEach{selected record}{
-  Mark the record with \texttt{poison\_marker} and store sanitized \texttt{poison\_payload} evidence\;
-  \If{the record is the intended target for promotion}{
-    Add the configured boost terms to the allowed target fields\;
-  }
-  Leave non-target evidence unchanged except for the audit marker\;
-}
-\end{algorithm}
-
-\begin{algorithm}[H]
-\caption{Attach payload and target-facing text}
-\KwInput{Selected movie records, sanitized payload, optional target movie, configured keywords}
-\KwOutput{Prompt-injection-style poisoned records for indexing}
-Resolve the configured keywords that should make the target more visible during retrieval or reranking\;
-\ForEach{selected record}{
-  Mark the record with \texttt{poison\_marker} and store the sanitized payload in \texttt{poison\_payload}\;
-  \If{the record is the configured target}{
-    Append the resolved keyword text to its synopsis field\;
-  }
-  Preserve the modified record as data to be indexed, not as a change to recommender code\;
-}
-\end{algorithm}
-
-\begin{algorithm}[H]
-\caption{Degrade selected document evidence}
-\KwInput{Selected movie records for untargeted degradation}
-\KwOutput{Poisoned records designed to reduce recommendation quality}
-\ForEach{selected record}{
-  Replace or rotate selected genre evidence so the record becomes less reliable for recommendation\;
-  Replace the synopsis with unrelated text to weaken semantic retrieval and reranking evidence\;
-  Mark the record with \texttt{poison\_marker} while leaving \texttt{poison\_payload} empty\;
-}
-Evaluate the effect through recommendation-quality metrics rather than targeted ASR\;
-\end{algorithm}
 
 After the the modifications made by each attack depending on the one selected are completed, the indexing builds an index out of the JSONL bulk and then switches the alias \texttt{movies\_poisoned} alias to the new physical index, clearly separating it from the clean \cite{ragpoisonlab_repo,elastic_docs_es}
 
