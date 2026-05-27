@@ -6,6 +6,7 @@ import { Layout } from "./components/Layout";
 import { Experiments } from "./pages/Experiments";
 import { Overview } from "./pages/Overview";
 import { Results } from "./pages/Results";
+import { MatrixResults } from "./pages/MatrixResults";
 import { Settings } from "./pages/Settings";
 import { UserDetail } from "./pages/UserDetail";
 import { Users } from "./pages/Users";
@@ -49,6 +50,7 @@ function App(): JSX.Element {
           <Route path="users" element={<Users />} />
           <Route path="users/:userId" element={<UserDetail />} />
           <Route path="results" element={<Results />} />
+          <Route path="matrix-results" element={<MatrixResults />} />
           <Route path="settings" element={<Settings />} />
           <Route path="dashboard/:userId" element={<UserDetail />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />

@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { to: "/experiments", label: "Experiments" },
   { to: "/users", label: "Users" },
   { to: "/results", label: "Results" },
+  { to: "/matrix-results", label: "Matrix Results" },
   { to: "/settings", label: "Settings" },
 ] as const;
 

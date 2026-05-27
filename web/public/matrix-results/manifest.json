@@ -1,0 +1,10 @@
+{
+  "copied_at_utc": "2026-05-27T03:29:20.227282+00:00",
+  "notes": "Static frontend snapshot generated from repository full matrix results; UI must compute metrics from this CSV only.",
+  "row_count": 15,
+  "sha256": "70aaefaee98f578effcd105b013c5a76e400ef9363b88c32a48296210f78a867",
+  "source_markdown_path": "data/results/full/combined_results.md",
+  "source_path": "data/results/full/combined_results.csv",
+  "source_updated_at_max": "2026-05-12T15:27:57.005601+00:00",
+  "source_updated_at_min": "2026-05-12T15:27:57.005601+00:00"
+}
