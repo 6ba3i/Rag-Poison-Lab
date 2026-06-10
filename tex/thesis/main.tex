@@ -72,12 +72,23 @@
 
 \thispagestyle{fancy}
 
+\begin{center}
 \section*{Abstract}
+\end{center}
 \addcontentsline{toc}{section}{Abstract}
 
 \input{sections/abstract}
 
 \noindent\textbf{Keywords: } RAG, LLM-powered recommender systems, recommender security, retrieval poisoning
+
+\clearpage
+\begin{center}
+\section*{摘要}
+\end{center}
+\addcontentsline{toc}{section}{摘要}
+\input{sections/chinese_abstract}
+
+\noindent\textbf{关键词：} 大型语言模型；推荐系统；检索增强生成；数据投毒；红队测试；安全基准
 \clearpage
 \tableofcontents
 \clearpage
@@ -115,15 +126,17 @@
 \end{landscape}
 
 \clearpage
-\section*{Acknowledgments}
-\input{sections/acknowledgments}
-
-\clearpage
 \begingroup
 \small
 \nocite{ragpoisonlab_repo}
 \bibliographystyle{unsrt}
 \bibliography{references}
 \endgroup
+
+\clearpage
+\begin{center}
+\section*{Acknowledgments}
+\end{center}
+\input{sections/acknowledgments}
 
 \end{document}
