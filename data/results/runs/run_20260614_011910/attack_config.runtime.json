@@ -19,6 +19,7 @@
   "poison_max_tokens": 256,
   "poison_prompt_profile": "model_tied_v1",
   "poison_temperature": 0.0,
+  "sha256": "f198edadd6a6460ddfcf3902a2300b2e7f1cfddf03a3649fb9cc4331598cbf1d",
   "target_boost_policy": "keyword_burst",
   "target_boost_strength": 2,
   "target_fields": [

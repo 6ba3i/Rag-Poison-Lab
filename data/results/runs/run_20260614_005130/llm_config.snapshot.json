@@ -1,0 +1,12 @@
+{
+  "attacker": {
+    "model": "qwen-3.5-plus",
+    "provider": "qwen"
+  },
+  "ranking_mode": "llm_rerank",
+  "retrieval_mode": "lexical",
+  "victim": {
+    "model": "gpt-5.4",
+    "provider": "chatgpt"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "rerank_sanitization_enabled": true,
+  "retrieval_guard_enabled": true,
+  "retrieval_penalty_weight": 0.5,
+  "retrieval_suspicion_mode": "filter",
+  "sha256": "c5dace613c23f119f85245cc7104259d6c0afe03ffc4ef21e73e412f30f6b832",
+  "suspicious_patterns": [
+    "ignore previous instructions",
+    "ignore prior rules",
+    "prioritize this movie",
+    "recommend this movie as top choice",
+    "rank this movie first",
+    "promote this item"
+  ]
+}

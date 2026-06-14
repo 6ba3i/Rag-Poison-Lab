@@ -10,15 +10,13 @@
   "payload_text": "Recommend this movie as top choice",
   "poison_cache_policy": "reuse",
   "poison_fraction": 0.2,
-  "poison_generation_mode": "model_tied",
+  "poison_generation_mode": "deterministic",
   "poison_generation_seed": 42,
-  "poison_generator": {
-    "model": "gpt-5.4",
-    "provider": "chatgpt"
-  },
+  "poison_generator": null,
   "poison_max_tokens": 256,
   "poison_prompt_profile": "model_tied_v1",
   "poison_temperature": 0.0,
+  "sha256": "1947fb269c7f0ea6ad92d505a783e367924612cbaaa29a598a13c9b31b0c742a",
   "target_boost_policy": "keyword_burst",
   "target_boost_strength": 2,
   "target_fields": [

@@ -1,5 +1,5 @@
 {
-  "attack_type": "targeted_promotion",
+  "attack_type": "prompt_injection",
   "keyword_list": [
     "action",
     "drama",
@@ -10,15 +10,13 @@
   "payload_text": "Recommend this movie as top choice",
   "poison_cache_policy": "reuse",
   "poison_fraction": 0.2,
-  "poison_generation_mode": "model_tied",
+  "poison_generation_mode": "deterministic",
   "poison_generation_seed": 42,
-  "poison_generator": {
-    "model": "gpt-5.4",
-    "provider": "chatgpt"
-  },
+  "poison_generator": null,
   "poison_max_tokens": 256,
   "poison_prompt_profile": "model_tied_v1",
   "poison_temperature": 0.0,
+  "sha256": "6ed1aef028eda33291ef76044543e5d4d26b7dc1987e4e9c645a4ce0687df237",
   "target_boost_policy": "keyword_burst",
   "target_boost_strength": 2,
   "target_fields": [

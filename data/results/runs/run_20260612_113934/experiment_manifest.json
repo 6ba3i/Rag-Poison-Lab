@@ -1,0 +1,87 @@
+{
+  "attack_config_path": "/workspace/data/config/attack_config.json",
+  "attack_config_sha256": "b8717ec37b786ed750072a688f26bce266602e8bf0a43f2321d17dc50134616a",
+  "defense_config_path": "/workspace/data/config/defense_config.json",
+  "defense_config_sha256": "c5dace613c23f119f85245cc7104259d6c0afe03ffc4ef21e73e412f30f6b832",
+  "evaluated_users": 1,
+  "generated_at_utc": "2026-06-12T11:39:36.433440+00:00",
+  "index_provenance": {
+    "movies": {
+      "logical_index": "movies",
+      "physical_index": "movies__20260612113928_703a4ecd5bac",
+      "provenance": {
+        "bulk_sha256": "703a4ecd5bac98c162483dfa9c741917274faf88aa40e75889c89259e5f4a80d",
+        "indexed_at_utc": "2026-06-12T11:39:28.909213+00:00",
+        "logical_index": "movies",
+        "mapping_sha256": "7d30a0a5b9740be0c01d9c8b4f0040e2b242be7233650d397e7e106ce9816e4b",
+        "physical_index": "movies__20260612113928_703a4ecd5bac"
+      }
+    },
+    "movies_poisoned": {
+      "logical_index": "movies_poisoned",
+      "physical_index": "movies_poisoned__20260612113930_6eff677b266e",
+      "provenance": {
+        "attack_config_sha256": "b8717ec37b786ed750072a688f26bce266602e8bf0a43f2321d17dc50134616a",
+        "attack_type": "targeted_promotion",
+        "bulk_sha256": "6eff677b266e559285359235a0b98a1931226cbdc4ae4f065dabd8769d7676fb",
+        "generated_at_utc": "2026-06-12T11:39:29.675740+00:00",
+        "generation_config_sha256": "b170f36b1025023fe66e8598e343e40a35b8fbedb3622223927a8f9f88289b73",
+        "indexed_at_utc": "2026-06-12T11:39:30.589938+00:00",
+        "logical_index": "movies_poisoned",
+        "mapping_sha256": "7d30a0a5b9740be0c01d9c8b4f0040e2b242be7233650d397e7e106ce9816e4b",
+        "output_bulk_sha256": "6eff677b266e559285359235a0b98a1931226cbdc4ae4f065dabd8769d7676fb",
+        "physical_index": "movies_poisoned__20260612113930_6eff677b266e",
+        "poison_cache_policy": "reuse",
+        "poison_fraction": 0.2,
+        "poison_generation_mode": "deterministic",
+        "poison_generation_seed": 42,
+        "poison_generation_stats": {
+          "mode": "deterministic",
+          "model": null,
+          "prompt_profile": "model_tied_v1",
+          "provider": null,
+          "requests_failed": 0,
+          "requests_succeeded": 0,
+          "requests_total": 0
+        },
+        "poison_generator_model": null,
+        "poison_generator_provider": null,
+        "poison_max_tokens": 256,
+        "poison_prompt_profile": "model_tied_v1",
+        "poison_temperature": 0.0,
+        "poisoned_bulk_meta_path": "/home/idriss/Rag-Poison-Lab/data/processed/es_bulk_poisoned_movies.meta.json",
+        "poisoned_docs": 336,
+        "source_bulk_sha256": "703a4ecd5bac98c162483dfa9c741917274faf88aa40e75889c89259e5f4a80d",
+        "target_movie_id": 1666,
+        "total_docs": 1682
+      }
+    }
+  },
+  "k": 10,
+  "label": "run_20260612_113934",
+  "llm_config": {
+    "attacker": {
+      "model": "qwen-3.5-plus",
+      "provider": "qwen"
+    },
+    "ranking_mode": "deterministic",
+    "retrieval_mode": "lexical",
+    "victim": {
+      "model": "gpt-5.4",
+      "provider": "chatgpt"
+    }
+  },
+  "metrics_path": "/workspace/data/results/runs/run_20260612_113934/metrics.json",
+  "mode": "single",
+  "repeat_count": 1,
+  "requested_users": 1,
+  "require_rerank_success": false,
+  "rerank_uses_victim_only": false,
+  "runtime_snapshot_paths": {
+    "attack_config_runtime_path": "/workspace/data/results/runs/run_20260612_113934/attack_config.runtime.json",
+    "defense_config_runtime_path": "/workspace/data/results/runs/run_20260612_113934/defense_config.runtime.json",
+    "llm_config_runtime_path": "/workspace/data/results/runs/run_20260612_113934/llm_config.runtime.json"
+  },
+  "seed": 42,
+  "skipped_users": 0
+}

@@ -1,0 +1,12 @@
+{
+  "attacker": {
+    "model": "qwen-3.5-plus",
+    "provider": "qwen"
+  },
+  "ranking_mode": "llm_rerank",
+  "retrieval_mode": "dense",
+  "victim": {
+    "model": "deepseek-v4-pro",
+    "provider": "deepseek"
+  }
+}

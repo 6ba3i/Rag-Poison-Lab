@@ -3,7 +3,7 @@
     "model": "deepseek-v4-pro",
     "provider": "deepseek"
   },
-  "ranking_mode": "deterministic",
+  "ranking_mode": "llm_rerank",
   "retrieval_mode": "lexical",
   "victim": {
     "model": "deepseek-v4-pro",
