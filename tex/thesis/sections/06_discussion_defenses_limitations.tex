@@ -24,7 +24,7 @@ The targeted-promotion and untargeted-degradation rows show wider model-conditio
 The first defense system to consider would be to include a filtering service in the retrieval pipeline, catching suspicious documents before they get to the ranking step, removing them and reindexing from the clean bulk. A sample of a defensive process was included in the current code as a theoretical measure but wasnt executed as a run for budget concerns \cite{ragpoisonlab_repo}.
 
 \begin{algorithm}[H]
-\caption{Apply retrieval and prompt-sanitization defense \cite{ragpoisonlab_repo}}
+\caption{Apply retrieval and prompt-sanitization defense}
 \KwInput{Retrieved candidates, recommendation mode, optional defense configuration}
 \KwOutput{Filtered candidates, sanitized prompt candidates, and defense debug evidence}
 \If{the recommendation is attacked and a defense configuration is enabled}{

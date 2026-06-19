@@ -138,7 +138,7 @@ def _profile_stage_defaults(*, run_profile: RunProfile) -> dict[str, bool]:
             "run_prepare": False,
             "run_index": False,
             "run_eval": True,
-            "run_report": False,
+            "run_report": True,
         }
     return {
         "run_prepare": True,

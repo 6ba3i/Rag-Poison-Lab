@@ -160,6 +160,17 @@ def test_attack_config_target_boost_defaults() -> None:
     assert config.poison_generator is None
 
 
+def test_checked_in_targeted_promotion_config_keeps_retrieval_boost_enabled() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    config = load_attack_config(repo_root / "data" / "config" / "attack_config.json")
+
+    assert config.attack_type == "targeted_promotion"
+    assert config.target_movie_id == 1666
+    assert config.target_boost_policy == "keyword_burst"
+    assert config.target_fields == ["title", "genres", "synopsis"]
+    assert config.keyword_list
+
+
 def test_load_attack_config_missing_and_empty_return_default(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing_attack_config.json"
     missing = load_attack_config(missing_path)

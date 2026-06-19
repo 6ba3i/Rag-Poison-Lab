@@ -1,0 +1,64 @@
+% Main-body metric split tables generated from data/results/full/combined_results.csv.
+\begin{table}[H]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{0.95}
+\caption{Recommendation-quality metrics for each final run.}
+\label{tab:body-quality-metrics}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{@{}llllrrrrrrrrr@{}}
+\toprule
+Run & Attack & Retr. & Rank & HR$_b$ & HR$_a$ & $\Delta$HR & NDCG$_b$ & NDCG$_a$ & $\Delta$NDCG & MRR$_b$ & MRR$_a$ & $\Delta$MRR \\
+\midrule
+R00 & TProm & hybrid & Det & 0.236479 & 0.227996 & -0.008483 & 0.036241 & 0.034553 & -0.001688 & 0.105886 & 0.100115 & -0.005771 \\
+R01 & PInj & dense & LLM\_Re & 0.314952 & 0.314952 & 0.000000 & 0.049294 & 0.048480 & -0.000814 & 0.135581 & 0.130518 & -0.005063 \\
+R02 & UDeg & hybrid & Det & 0.236479 & 0.183457 & -0.053022 & 0.036241 & 0.027820 & -0.008421 & 0.105886 & 0.079839 & -0.026047 \\
+R03 & TProm & hybrid & Det & 0.236479 & 0.230117 & -0.006362 & 0.036241 & 0.034838 & -0.001403 & 0.105886 & 0.101156 & -0.004730 \\
+R04 & PInj & dense & LLM\_Re & 0.320255 & 0.324496 & 0.004241 & 0.050110 & 0.049271 & -0.000839 & 0.138637 & 0.133847 & -0.004790 \\
+R05 & UDeg & hybrid & Det & 0.236479 & 0.178155 & -0.058324 & 0.036241 & 0.027282 & -0.008959 & 0.105886 & 0.078491 & -0.027395 \\
+R06 & TProm & hybrid & Det & 0.236479 & 0.230117 & -0.006362 & 0.036241 & 0.034838 & -0.001403 & 0.105886 & 0.101156 & -0.004730 \\
+R07 & PInj & dense & LLM\_Re & 0.330859 & 0.319194 & -0.011665 & 0.049952 & 0.048728 & -0.001224 & 0.138125 & 0.134155 & -0.003970 \\
+R08 & UDeg & hybrid & Det & 0.236479 & 0.146341 & -0.090138 & 0.036241 & 0.023398 & -0.012843 & 0.105886 & 0.069136 & -0.036750 \\
+R09 & TProm & hybrid & Det & 0.236479 & 0.227996 & -0.008483 & 0.036241 & 0.034345 & -0.001896 & 0.105886 & 0.098846 & -0.007040 \\
+R10 & PInj & dense & LLM\_Re & 0.325557 & 0.319194 & -0.006363 & 0.050452 & 0.048823 & -0.001629 & 0.138766 & 0.133857 & -0.004909 \\
+R11 & UDeg & hybrid & Det & 0.236479 & 0.137858 & -0.098621 & 0.036241 & 0.022185 & -0.014056 & 0.105886 & 0.066847 & -0.039039 \\
+R12 & TProm & hybrid & Det & 0.236479 & 0.230117 & -0.006362 & 0.036241 & 0.034838 & -0.001403 & 0.105886 & 0.101156 & -0.004730 \\
+R13 & PInj & dense & LLM\_Re & 0.324496 & 0.326617 & 0.002121 & 0.049471 & 0.048839 & -0.000632 & 0.134806 & 0.133008 & -0.001798 \\
+R14 & UDeg & hybrid & Det & 0.236479 & 0.146341 & -0.090138 & 0.036241 & 0.023398 & -0.012843 & 0.105886 & 0.069136 & -0.036750 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{0.95}
+\caption{Target-oriented attack success and retrieval-rank movement.}
+\label{tab:body-target-metrics}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{@{}llllrrrrr@{}}
+\toprule
+Run & Attack & Victim & Attacker & ASR$_b$ & ASR$_a$ & $\Delta$ASR & Rank$_b$ & Rank$_a$ \\
+\midrule
+R00 & TProm & gpt-5.4 & gpt-5.4 & 0.001060 & 0.383881 & 0.382821 & 16.000000 & 14.891419 \\
+R01 & PInj & deepseek-v4-pro & gpt-5.4 & 0.001060 & 0.158006 & 0.156946 & 18.777778 & 24.589404 \\
+R02 & UDeg & gpt-5.4 & gpt-5.4 & -- & -- & -- & 16.000000 & 26.625000 \\
+R03 & TProm & gpt-5.4 & claude-sonnet-4-6 & 0.001060 & 0.309650 & 0.308590 & 16.000000 & 17.185047 \\
+R04 & PInj & deepseek-v4-pro & claude-sonnet-4-6 & 0.000000 & 0.158006 & 0.158006 & 18.777778 & 24.589404 \\
+R05 & UDeg & gpt-5.4 & claude-sonnet-4-6 & -- & -- & -- & 16.000000 & 25.687500 \\
+R06 & TProm & gpt-5.4 & gemini-3.1-pro-preview & 0.001060 & 0.309650 & 0.308590 & 16.000000 & 17.185047 \\
+R07 & PInj & deepseek-v4-pro & gemini-3.1-pro-preview & 0.001060 & 0.158006 & 0.156946 & 18.777778 & 24.589404 \\
+R08 & UDeg & gpt-5.4 & gemini-3.1-pro-preview & -- & -- & -- & 16.000000 & 25.687500 \\
+R09 & TProm & gpt-5.4 & qwen-3.5-plus & 0.001060 & 0.434783 & 0.433723 & 16.000000 & 13.023891 \\
+R10 & PInj & deepseek-v4-pro & qwen-3.5-plus & 0.000000 & 0.156946 & 0.156946 & 18.777778 & 24.589404 \\
+R11 & UDeg & gpt-5.4 & qwen-3.5-plus & -- & -- & -- & 16.000000 & 25.687500 \\
+R12 & TProm & gpt-5.4 & deepseek-v4-pro & 0.001060 & 0.309650 & 0.308590 & 16.000000 & 17.185047 \\
+R13 & PInj & deepseek-v4-pro & deepseek-v4-pro & 0.000000 & 0.158006 & 0.158006 & 18.777778 & 24.589404 \\
+R14 & UDeg & gpt-5.4 & deepseek-v4-pro & -- & -- & -- & 16.000000 & 25.687500 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

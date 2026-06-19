@@ -12,6 +12,7 @@
 \usepackage{etoolbox}
 \usepackage{pdflscape}
 \usepackage{chngcntr}
+\usepackage{caption}
 \usepackage{hyperref}
 \usepackage{fancyhdr}
 \usepackage{iftex}
@@ -64,7 +65,11 @@
 
 \AtBeginEnvironment{longtable}{\singlespacing}
 \counterwithin{figure}{section}
+\counterwithin{table}{section}
 \renewcommand{\thefigure}{\thesection-\arabic{figure}}
+\renewcommand{\thetable}{\thesection-\arabic{table}}
+\captionsetup[figure]{labelsep=colon,position=top}
+\captionsetup[table]{labelsep=colon,position=top}
 
 \date{}
 
@@ -116,16 +121,9 @@
 \section{Conclusion and Future Work}
 \input{sections/07_conclusion_future_work}
 
-\clearpage
-\appendix
-\begin{landscape}
-\section{Full Final Experiment Matrix}
-\label{sec:full-final-experiment-matrix}
-% Batch 02: generated directly from data/results/full/combined_results.md via tex/thesis/scripts/parse_results.py.
-\input{tables/combined_results_table}
-\end{landscape}
 
 \clearpage
+\addcontentsline{toc}{section}{References}
 \begingroup
 \small
 \nocite{ragpoisonlab_repo}
@@ -137,6 +135,7 @@
 \begin{center}
 \section*{Acknowledgments}
 \end{center}
+\addcontentsline{toc}{section}{Acknowledgments}
 \input{sections/acknowledgments}
 
 \end{document}

@@ -1,0 +1,32 @@
+% Main-body split result tables generated from data/results/full/combined_results.csv.
+\begin{table}[H]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{0.95}
+\caption{Main-body run configuration view for the final matrix.}
+\label{tab:body-run-configuration}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{@{}llllllrrr@{}}
+\toprule
+Run & Attack & Retrieval & Ranking & Victim & Attacker & Poison frac. & Target & Users \\
+\midrule
+R00 & TProm & hybrid & Det & gpt-5.4 & gpt-5.4 & 0.100000 & 1666 & 943 \\
+R01 & PInj & dense & LLM\_Re & deepseek-v4-pro & gpt-5.4 & 0.000000 & 1666 & 943 \\
+R02 & UDeg & hybrid & Det & gpt-5.4 & gpt-5.4 & 0.300000 & 1666 & 943 \\
+R03 & TProm & hybrid & Det & gpt-5.4 & claude-sonnet-4-6 & 0.100000 & 1666 & 943 \\
+R04 & PInj & dense & LLM\_Re & deepseek-v4-pro & claude-sonnet-4-6 & 0.000000 & 1666 & 943 \\
+R05 & UDeg & hybrid & Det & gpt-5.4 & claude-sonnet-4-6 & 0.300000 & 1666 & 943 \\
+R06 & TProm & hybrid & Det & gpt-5.4 & gemini-3.1-pro-preview & 0.100000 & 1666 & 943 \\
+R07 & PInj & dense & LLM\_Re & deepseek-v4-pro & gemini-3.1-pro-preview & 0.000000 & 1666 & 943 \\
+R08 & UDeg & hybrid & Det & gpt-5.4 & gemini-3.1-pro-preview & 0.300000 & 1666 & 943 \\
+R09 & TProm & hybrid & Det & gpt-5.4 & qwen-3.5-plus & 0.100000 & 1666 & 943 \\
+R10 & PInj & dense & LLM\_Re & deepseek-v4-pro & qwen-3.5-plus & 0.000000 & 1666 & 943 \\
+R11 & UDeg & hybrid & Det & gpt-5.4 & qwen-3.5-plus & 0.300000 & 1666 & 943 \\
+R12 & TProm & hybrid & Det & gpt-5.4 & deepseek-v4-pro & 0.100000 & 1666 & 943 \\
+R13 & PInj & dense & LLM\_Re & deepseek-v4-pro & deepseek-v4-pro & 0.000000 & 1666 & 943 \\
+R14 & UDeg & hybrid & Det & gpt-5.4 & deepseek-v4-pro & 0.300000 & 1666 & 943 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

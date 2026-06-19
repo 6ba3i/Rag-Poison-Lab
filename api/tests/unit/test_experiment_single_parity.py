@@ -56,7 +56,7 @@ def test_single_demo_planner_defaults_and_override() -> None:
     assert resolved.run_prepare is False
     assert resolved.run_index is False
     assert resolved.run_eval is True
-    assert resolved.run_report is False
+    assert resolved.run_report is True
 
     overridden = plan_experiment_run(
         options=ExperimentRunOptions(
@@ -110,7 +110,7 @@ def test_api_and_wizard_single_demo_use_same_resolved_options(monkeypatch: pytes
     assert api_resolved.run_prepare is False
     assert api_resolved.run_index is False
     assert api_resolved.run_eval is True
-    assert api_resolved.run_report is False
+    assert api_resolved.run_report is True
 
 
 def test_api_and_wizard_single_demo_fail_with_same_reason(monkeypatch: pytest.MonkeyPatch) -> None:

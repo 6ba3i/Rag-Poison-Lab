@@ -20,6 +20,15 @@ The attacker can only affect existing data. It cannot create new users or add in
 
 The victim system has the ability to use either deterministic or LLM Reranking, though deterministic is only used as a fallback we still include the testing of it in some of our attacks where it is more relevant. This is important because LLM-powered recommenders can fail because poisoned text changes the the first retrieval step or because it affected the LLM that reads the description of the candidates during reranking. the predetermined items are sent to the LLM to re-order, and never has to generate its own recommendation from scratch keeping the cost price effective and measurable \cite{ragpoisonlab_repo,hou2024llmrankers,sun2024rankgpt}
 
+
+The threat model can be read as a metadata-control attacker rather than a system-control attacker. The attacker is allowed to shape what is stored in the poisoned item records, but is not allowed to change the users, the ratings, the metric implementation, or the recommendation code. This distinction is important because it keeps the attack inside the same kind of surface that a retrieval-augmented recommender would normally consume: titles, genres, synopsis text, payload-like fields, and audit markers. If the attacker were allowed to edit user histories or evaluation scripts, the result would no longer measure retrieval or metadata poisoning. It would instead become a broader data-integrity or benchmark-integrity problem. This thesis avoids that by keeping the clean user side fixed and changing only the attacked item side before indexing \cite{ragpoisonlab_repo,harper2015movielens,zhong2023retrievalcorpora}.
+
+The attacker also does not directly control the victim LLM. This is especially relevant for prompt injection because the injected text is not sent as a privileged system instruction by the benchmark. It is stored as item data, then it may become visible when the recommender retrieves and serializes candidate items for reranking. The risk is therefore indirect: poisoned item text can be placed next to trusted task instructions inside the model-facing context. This is closer to the indirect prompt-injection problem than to a normal user prompt attack, because the model sees hostile or manipulative text through retrieved external content rather than through a direct chat message \cite{greshake2023indirectpi,yi2025bipia,wallace2024instructionhierarchy}.
+
+The clean-versus-attacked split is the central control in this threat model. Every measured effect depends on comparing a recommendation list produced from the clean index against a recommendation list produced from the poisoned index under the same user profile and top-$k$ setting. This means that the benchmark does not need to argue that one standalone list is good or bad in isolation. It only needs to ask whether the poisoned version moved the output relative to its paired clean baseline. That paired design is why the delta values are more important than raw attacked scores alone. A raw HR value can be hard to interpret without context, but a negative $\Delta$HR directly states that the attacked condition reduced hit-rate performance for the same run setup \cite{ragpoisonlab_repo,herlocker2004evaluating}.
+
+The model-role boundary is also part of the threat model. In the matrix, the attacker model is responsible for producing or supporting poisoned content, while the victim model is the model exposed during recommendation or reranking. The thesis does not claim that the attacker model is always the cause of the final vulnerability. Retrieval mode, ranking mode, poisoning strength, and target visibility can matter more than provider name. The model labels are therefore experimental factors, not a universal safety ranking. This is why the final interpretation treats each row as a complete condition rather than as an isolated model score \cite{ragpoisonlab_repo,hou2024llmrankers,sun2024rankgpt}.
+
 \subsection{Attack Families}
 
 To better display all attack families Figure~\ref{fig:attack-pipeline} shows how all three are implemented \cite{ragpoisonlab_repo}.
@@ -121,9 +130,9 @@ Record the indexing count and alias state so the run can be audited later\;
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.92\textwidth]{figures/experiment_lifecycle.png}
-  \caption{Experiment lifecycle used to prepare data, build the poisoned corpus, evaluate paired recommendations, and write audit artifacts \cite{ragpoisonlab_repo}.}
+  \caption{Experiment lifecycle used to prepare data, build the poisoned corpus, evaluate paired recommendations, and write audit artifacts.}
   \label{fig:experiment-lifecycle}
+  \includegraphics[width=0.92\textwidth]{figures/experiment_lifecycle.png}
 \end{figure}
 
 As shown in Figure~\ref{fig:experiment-lifecycle}, the workflow consists of 6 stages six stages. The first stage prepares data where we loaded, normalized, split into training and test portions the MovieLens dataset, then index it through user profile vectors as bulks in Elasticsearch. The second stage builds the poisoned corpus from the attack configuration and applies the attack family on the baseline data and then index it the poisoned artifact bulk which Then leads to third stage and final indexing steps that lands the clean and poisoned vectors into \texttt{movies} and \texttt{movies\_poisoned} \cite{ragpoisonlab_repo,harper2015movielens,elastic_docs_es}.
@@ -185,6 +194,8 @@ The run-level value written to the experiment artifacts is the arithmetic mean o
 \begin{table}[H]
 \centering
 \small
+\caption{Attack-family metric applicability for the methodology.}
+\label{tab:attack-metric-applicability}
 \begin{tabular}{p{0.24\textwidth}p{0.32\textwidth}p{0.32\textwidth}}
 \toprule
 Attack family & Primary metric role & Methodological interpretation \\
@@ -194,11 +205,24 @@ Prompt-injection insertion & ASR when target context exists; trace diagnostics &
 Untargeted degradation & HR, NDCG, and MRR & Quality metrics show whether poisoning reduces held-out relevance or pushes relevant items lower. \\
 \bottomrule
 \end{tabular}
-\caption{Attack-family metric applicability for the methodology \cite{ragpoisonlab_repo}.}
-\label{tab:attack-metric-applicability}
 \end{table}
 
 All final results of the full matrix use $k=10$, so the thesis will mostly discuss HR@10, NDCG@10, MRR@10, and ASR@10. RAGPoison allows for configurable $k$ but to simplify the process while getting the most complete results, $k=10$ is a good compromise \cite{ragpoisonlab_repo}.
+
+
+\subsubsection{Metric Interpretation Guide}
+
+The metric set is intentionally split between recommendation quality and attack success. HR, NDCG, and MRR describe the usefulness and ordering quality of the final recommendation list. ASR describes whether a target-oriented attack achieved its specific exposure goal. These are related but not interchangeable. A poisoned run can have a small change in HR while still being dangerous if the target item becomes visible to many users. The opposite can also happen: untargeted degradation can strongly damage HR, NDCG, and MRR while having no ASR value because it does not promote one target item \cite{ragpoisonlab_repo,herlocker2004evaluating,wang2013ndcg}.
+
+HR is the most direct quality metric because it asks whether at least one relevant item appears in the top-$k$ list. It is easy to explain and useful for a high-level view of recommendation usefulness. However, HR does not care where the relevant item appears inside the list. A relevant item at rank 1 and a relevant item at rank 10 can both count as a hit. This makes HR useful but incomplete for poisoned ranking analysis, because an attack may not remove all relevant items but can still push them lower in the list.
+
+MRR adds rank sensitivity by rewarding earlier relevant results more strongly. In this thesis, MRR is useful when the main question is whether poisoning moves good recommendations away from the top positions. A small negative $\Delta$MRR can still matter because the value is averaged across all evaluated users. It may represent many small rank movements or stronger effects on a subset of users. This is one reason the thesis avoids treating small decimals as meaningless. The run-level number is a summary over 943 evaluated users, not a single recommendation event \cite{ragpoisonlab_repo}.
+
+NDCG is broader than MRR because it can account for the ranked usefulness of multiple relevant items rather than only the first relevant item. It is therefore helpful when the poisoned list still contains relevant items but changes their order. In recommender evaluation, this matters because a top-$k$ list is not only a binary success or failure. The placement of relevant movies affects what the user sees first and how much useful content remains near the top. In the poisoning setting, NDCG helps show whether the attack damages the ranked structure of the list even when HR does not collapse completely \cite{herlocker2004evaluating,wang2013ndcg}.
+
+ASR is different because it is not a general recommendation-quality metric. It is an attack-goal metric. For targeted promotion and prompt injection, ASR asks whether the configured target movie appears in the final top-$k$ output more often under attack. This is why ASR can rise even if HR, NDCG, and MRR change only slightly. A recommender can still look mostly functional while quietly increasing exposure for a target item. For untargeted degradation, ASR is not applicable because there is no single target movie to promote. In that case, the quality metrics carry the evidence instead \cite{ragpoisonlab_repo,nguyen2024manipulatingrecsys,wang2024recpoisonsurvey}.
+
+The safest reading is therefore metric-by-question. If the question is whether normal recommendation quality was damaged, HR, NDCG, and MRR should be read together. If the question is whether a target-oriented attack achieved exposure, ASR and target-rank movement should be read first, then HR, NDCG, and MRR should be used to understand collateral damage. This prevents the analysis from unfairly treating untargeted degradation as a failed ASR attack or treating targeted promotion as weak only because its quality deltas are smaller than the degradation family.
 
 \subsection{Controls and Reproducibility}
 

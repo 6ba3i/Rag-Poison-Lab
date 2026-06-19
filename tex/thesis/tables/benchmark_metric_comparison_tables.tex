@@ -1,0 +1,38 @@
+% Additive numeric benchmark comparison table. Caption intentionally contains no citations.
+\begin{table}[H]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{0.88}
+\caption{Numerical comparison with nearby benchmark reports.}
+\label{tab:bounded-numeric-benchmark-comparison}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llcccc}
+\toprule
+Benchmark / condition & Result type & HR & NDCG & MRR & ASR \\
+\midrule
+RAGPoison TProm & mean attacked & 0.229269 & 0.034682 & 0.100486 & 0.349523 \\
+RAGPoison TProm & mean delta & -0.007210 & -0.001559 & -0.005400 & +0.348463 \\
+RAGPoison PInj & mean attacked & 0.320891 & 0.048828 & 0.133077 & 0.157794 \\
+RAGPoison PInj & mean delta & -0.002333 & -0.001028 & -0.004106 & +0.157370 \\
+RAGPoison UDeg & mean attacked & 0.158430 & 0.024817 & 0.072690 & -- \\
+RAGPoison UDeg & mean delta & -0.078049 & -0.011424 & -0.033196 & -- \\
+\midrule
+Poison-RAG popular baseline & reported value & 0.2708 & 0.0533 & 0.1581 & -- \\
+Poison-RAG popular local size 1 & reported value & 0.2552 & 0.0508 & 0.1438 & -- \\
+Poison-RAG long-tail baseline & reported value & 0.0758 & 0.0298 & 0.0434 & -- \\
+Poison-RAG long-tail local size 1 & reported value & 0.0303 & 0.0153 & 0.0152 & -- \\
+\midrule
+RAGPoisonBench BPRAG on NQ & reported ASR & -- & -- & -- & 0.62 \\
+RAGPoisonBench WPRAG on NQ & reported ASR & -- & -- & -- & 0.64 \\
+RAGPoisonBench BPI on NQ & reported ASR & -- & -- & -- & 0.94 \\
+RAGPoisonBench WPI on NQ & reported ASR & -- & -- & -- & 0.97 \\
+\midrule
+BIPIA GPT-4 original & reported ASR & -- & -- & -- & 0.3103 \\
+BIPIA GPT-3.5-Turbo original & reported ASR & -- & -- & -- & 0.2616 \\
+BIPIA Vicuna-7B original & reported ASR & -- & -- & -- & 0.1237 \\
+BIPIA Vicuna-13B original & reported ASR & -- & -- & -- & 0.1531 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

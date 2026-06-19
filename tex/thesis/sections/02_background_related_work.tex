@@ -50,3 +50,29 @@ Red-teaming is an attempt to find the unsafe and unwanted behavior before gettin
 
 We will also need to cater to the Rag and recommender systems own requirement in our project since a RAG benchmark not only needs to specify the language model but also its corpus and retrieval process. A recommender benchmark on the other hand needs to specify the users, items and metrics and a poisoning benchmark needs to specify the attackers goal, the scope of poisoning and a clear separation between the clean and attacked conditions. Without clear logging of all of these requirement, a change the recommendation could be coming from any of these steps without clearly knowing which one it was \cite{thakur2021beir,liang2023helm,zhang2025ragpoisonbench}. This is what will be achieved with RAGPoison, a smaller benchmark compared to live production systems but still useful since all steps between baseline and poisoned are auditable.
 
+
+
+\subsection{Positioning Against Similar Benchmarks}
+
+The related work also helps position this thesis against nearby benchmarks without turning the comparison into a leaderboard. Poison-RAG is the closest external reference because it studies adversarial data poisoning in retrieval-augmented recommender systems and also focuses on metadata such as tags and item descriptions \cite{nazary2025poisonrag}. PoisonedRAG and the broader RAG poisoning benchmark literature are close in the retrieval-security sense, but their main evaluation target is usually question answering or generation behavior rather than top-$k$ recommendation exposure \cite{zou2025poisonedrag_usenix,zhang2025ragpoisonbench}. Indirect prompt-injection benchmarks are also relevant because they study external text that reaches an LLM through an application workflow, which is the same class of risk created when a recommender passes item text to an LLM reranker \cite{yi2025bipia}. LLM recommendation benchmarks and zero-shot LLM ranker studies justify the ranking setting, but they are not poisoning benchmarks by themselves \cite{hou2024llmrankers,liu2023llmrecbench,geng2023p5}.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Benchmark-positioning comparison for this thesis.}
+\label{tab:benchmark-positioning-comparison}
+\begin{tabular}{p{0.19\textwidth}p{0.18\textwidth}p{0.20\textwidth}p{0.33\textwidth}}
+\toprule
+Work & Main domain & Main attack or evaluation surface & Relation to RAGPoison Lab \\
+\midrule
+Poison-RAG & RAG recommender & Item metadata poisoning in a recommender setting & Closest comparison because it directly studies RAG-based recommender poisoning with item metadata. \\
+PoisonedRAG & RAG question answering & Malicious knowledge injected into retrieval corpora & Close for retrieval poisoning, but the task is generation correctness instead of recommendation exposure. \\
+RAG poisoning benchmark & RAG benchmark design & Multiple poisoning attacks and defenses across QA datasets & Useful for benchmark structure and threat-model comparison, not for direct metric comparison. \\
+Indirect prompt-injection benchmarks & LLM-integrated applications & External content that conflicts with application instructions & Useful for the prompt-injection family and for explaining why retrieved text should be treated as untrusted. \\
+LLM recommender and ranker studies & Recommendation and ranking & LLMs used as recommenders or rerankers & Useful for justifying the LLM reranking setting but not a poisoning baseline. \\
+Traditional recommender poisoning & Collaborative filtering and top-$N$ recommendation & Fake ratings, fake users, or graph/profile manipulation & Useful for attacker goals and exposure concepts, while the injection point differs from metadata and retrieval poisoning. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This thesis should therefore compare itself to earlier work at the level of setting, threat model, artifact design, and metric choice. A direct numerical comparison would be misleading unless the compared papers used the same dataset split, retrieval method, ranking method, poisoning budget, target definition, and metric implementation. The safer comparison is that RAGPoison Lab combines three ideas that are often studied separately: recommender poisoning goals, RAG-style retrieval poisoning surfaces, and prompt-visible LLM reranking. This makes the thesis narrower than a production security benchmark but more specific than a general LLM red-team prompt set.
